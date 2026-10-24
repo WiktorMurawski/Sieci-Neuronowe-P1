@@ -10,8 +10,7 @@ Przykład użycia (interfejs podobny do scikit-learn):
     y_pred = net.predict(X_test)
     acc = net.score(X_test, y_test)
 
-Wizualizacje nie są częścią tej klasy: fit() zwraca obiekt History
-(błąd po iteracjach/epokach, migawki wag), a osobny moduł rysuje wykresy.
+fit() zwraca obiekt History z błędem każdej iteracji i epoki, metryką oraz kopiami wag co snapshot_every epok
 """
 import warnings
 from dataclasses import dataclass, field

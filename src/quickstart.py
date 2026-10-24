@@ -34,11 +34,11 @@ def regression(path, seed=0):
     pred = sy.inverse_transform(net.predict(sx.transform(X_te)).reshape(-1, 1))[:, 0]
     rmse = np.sqrt(np.mean((pred - y_te) ** 2))
     r2 = 1 - np.sum((pred - y_te) ** 2) / np.sum((y_te - y_te.mean()) ** 2)
-    print(f"{path:32s} test R2={r2:.4f}  RMSE={rmse:.3f} (w jednostkach y)")
+    print(f"{path:32s} test R2={r2:.4f}  RMSE={rmse:.3f}")
 
 
 if __name__ == "__main__":
-    for f in ("data.simple.test.100.csv", "data.three_gauss.test.100.csv"):
+    for f in ("classification/data.simple.test.100.csv", "classification/data.three_gauss.test.100.csv"):
         classification(f)
-    for f in ("data.activation.test.100.csv", "data.cube.test.100.csv"):
+    for f in ("regression/data.activation.test.100.csv", "regression/data.cube.test.100.csv"):
         regression(f)
