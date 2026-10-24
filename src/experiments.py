@@ -9,6 +9,13 @@ classification/ i regression/. Dla każdej pary i każdej konfiguracji sieci:
   3. uczy sieć dla wszystkich ziaren i liczy wyniki na pliku test (test nie służy do wyborów).
 Na końcu wypisuje tabele i zapisuje je (z wykresami sieci referencyjnej) do folderu results/.
 """
+
+import os
+for name in ("OMP_NUM_THREADS", "OPENBLAS_NUM_THREADS", "MKL_NUM_THREADS"):
+    os.environ.setdefault(name, "1")
+
+from concurrent.futures import ProcessPoolExecutor
+
 import re
 import warnings
 from pathlib import Path
@@ -21,11 +28,12 @@ matplotlib.use("Agg")
 import viz
 from data import Standardizer, load_csv, train_test_split
 from mlp import MLP
+from optimizers import SGD
 
 warnings.filterwarnings("ignore")
 np.seterr(all="ignore")
 
-ROOT = Path(__file__).resolve().parent
+ROOT = Path(__file__).resolve().parent.parent
 OUT = ROOT / "results"
 SEEDS = range(5)                # ziarna generatora liczb losowych
 LRS = (0.1, 0.01, 0.001)        # sprawdzane kroki uczenia
@@ -49,7 +57,7 @@ def configs(task):
     result.append(("B", "0 warstw", [], "tanh", loss))                   # B
     for n_layers in (1, 2, 3, 4):
         for w in (8, 32):
-            result.append(("B", f"{n_layers}×{w}", [w] * n_layers, "tanh", loss))
+            result.append(("B", f"{n_layers}x{w}", [w] * n_layers, "tanh", loss))
     other_loss = "mse" if task == "classification" else "mae"            # C
     result.append(("C", loss, [width, width], "tanh", loss))
     result.append(("C", other_loss, [width, width], "tanh", other_loss))
@@ -83,7 +91,7 @@ def train(data, hidden, activation, loss, lr, seed, snapshots=False):
     batch = max(32, len(data.X_train) // 30)
     epochs = max(MIN_EPOCHS, MIN_ITERATIONS // (len(data.X_train) // batch))
     history = net.fit(data.inputs(data.X_train), data.targets(data.y_train), epochs=epochs, batch_size=batch,
-                      lr=lr, optimizer="sgd", optimizer_params={"momentum": MOMENTUM},
+                      optimizer=SGD(lr, MOMENTUM),
                       X_val=data.inputs(data.X_val), y_val=data.targets(data.y_val),
                       snapshot_every=max(1, epochs // 100) if snapshots else None)
     return net, history
@@ -106,7 +114,7 @@ def test_metrics(net, data):
 
 def run_once(data, hidden, activation, loss, lr, seed):
     net, history = train(data, hidden, activation, loss, lr, seed)
-    if not (np.isfinite(history.loss[-1]) and np.isfinite(history.val_loss[-1])):
+    if not (np.isfinite(history.loss[-1]) and np.isfinite(history.val_loss[-1])):    # uczenie się rozbiegło
         return {"val_loss": np.inf, "metric": np.nan, "metric2": np.nan}
     metric, metric2 = test_metrics(net, data)
     return {"val_loss": history.val_loss[-1], "metric": metric, "metric2": metric2}
@@ -123,7 +131,7 @@ def run_config(data, hidden, activation, loss):
 def save_figures(data, hidden, lr, name):
     """Wykresy sieci referencyjnej: wynik, błąd po iteracjach, ewolucja wag."""
     net, history = train(data, hidden, "tanh", DEFAULT_LOSS[data.task], lr, seed=0, snapshots=True)
-    X, y = data.X_train[:500], data.y_train[:500]
+    X, y = data.X_train[:500], data.y_train[:500]                         # na wykresie najwyżej 500 punktów
     sample = np.random.default_rng(0).permutation(len(data.X_test))[:500]
     X_test, y_test = data.X_test[sample], data.y_test[sample]
     title = f"{name} (lr={lr})"
@@ -132,10 +140,9 @@ def save_figures(data, hidden, lr, name):
     else:
         figure = viz.plot_regression(net, X, y, X_test, y_test, x_scaler=data.x_scaler,
                                      y_scaler=data.y_scaler, title=title)
-    viz.save_figure(figure, OUT / "figures" / f"{name}_wynik.png")
-    viz.save_figure(viz.plot_loss(history), OUT / "figures" / f"{name}_blad.png")
-    viz.save_figure(viz.plot_weight_trajectories(history), OUT / "figures" / f"{name}_wagi_trajektorie.png")
-    viz.save_figure(viz.plot_weight_heatmaps(history), OUT / "figures" / f"{name}_wagi_heatmapy.png")
+    viz.save_figure(figure, str(OUT / "figures" / f"{name}_wynik.png"))
+    viz.save_figure(viz.plot_loss(history), str(OUT / "figures" / f"{name}_blad.png"))
+    viz.save_figure(viz.plot_weight_trajectories(history), str(OUT / "figures" / f"{name}_wagi.png"))
 
 
 def run_pair(task, train_path, test_path):
@@ -166,7 +173,7 @@ def make_tables(df):
                 g["cell"] = g["mean"].map("{:.4g}".format) + " ± " + g["std"].map("{:.2g}".format) \
                     + " (" + g["lr"].astype(str) + ")"
                 table = g.pivot(index=["dataset", "N"], columns="label", values="cell")
-                table = table[list(dict.fromkeys(part["label"]))]
+                table = table[list(dict.fromkeys(part["label"]))]       # kolejność kolumn jak w configs()
                 text.append(f"\n{experiment}. {experiment_name} - {task} - {METRIC_NAMES[(task, column)]}\n"
                             + table.to_string())
     return "\n".join(text)
@@ -185,13 +192,18 @@ def main():
         raise SystemExit(f"Nie znaleziono plików data.*.train.*.csv w {ROOT / 'classification'} ani {ROOT / 'regression'}")
 
     (OUT / "figures").mkdir(parents=True, exist_ok=True)
+    # rows = []
+    # for i, (task, train_path, test_path) in enumerate(pairs, 1):
+    #     print(f"[{i}/{len(pairs)}] {task}/{train_path.name}", flush=True)
+    #     rows += run_pair(task, train_path, test_path)
     rows = []
-    for i, (task, train_path, test_path) in enumerate(pairs, 1):
-        print(f"[{i}/{len(pairs)}] {task}/{train_path.name}", flush=True)
-        rows += run_pair(task, train_path, test_path)
+    with ProcessPoolExecutor() as executor:
+        for i, pair_rows in enumerate(executor.map(run_pair, *zip(*pairs)), 1):
+            rows += pair_rows
+            print(f"[{i}/{len(pairs)}] gotowe", flush=True)
 
     df = pd.DataFrame(rows)
-    df.to_csv(OUT / "results.csv", index=False)
+    df.to_csv(OUT / "results.csv", index=False)                       # wszystkie pojedyncze uruchomienia
     text = make_tables(df)
     (OUT / "results.txt").write_text(text, encoding="utf-8")
     print("\n" + text)

@@ -3,6 +3,10 @@
 Każda aktywacja ma dwie metody:
     forward(z)          -> a = f(z)
     backward(z, a, da)  -> dL/dz, mając dL/da (da)
+
+Dzięki takiemu interfejsowi także softmax (którego pochodna to macierz
+Jacobiego, a nie zwykłe mnożenie element po elemencie) pasuje do tego samego
+schematu co pozostałe funkcje.
 """
 import numpy as np
 
@@ -34,6 +38,7 @@ class Sigmoid(Activation):
     name = "sigmoid"
 
     def forward(self, z):
+        # clip chroni przed przepełnieniem w exp()
         return 1.0 / (1.0 + np.exp(-np.clip(z, -500, 500)))
 
     def backward(self, z, a, da):
@@ -60,19 +65,6 @@ class ReLU(Activation):
         return da * (z > 0)
 
 
-class LeakyReLU(Activation):
-    name = "leaky_relu"
-
-    def __init__(self, alpha=0.01):
-        self.alpha = alpha
-
-    def forward(self, z):
-        return np.where(z > 0, z, self.alpha * z)
-
-    def backward(self, z, a, da):
-        return da * np.where(z > 0, 1.0, self.alpha)
-
-
 class Softmax(Activation):
     """Softmax po osi 1 (każdy wiersz = jedna próbka)."""
     name = "softmax"
@@ -92,7 +84,6 @@ ACTIVATIONS = {
     "sigmoid": Sigmoid,
     "tanh": Tanh,
     "relu": ReLU,
-    "leaky_relu": LeakyReLU,
     "softmax": Softmax,
 }
 
