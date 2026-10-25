@@ -23,9 +23,11 @@ class Dense:
 
     def __init__(self, n_in, n_out, activation, use_bias, rng):
         self.activation = get_activation(activation)
-        if self.activation.name == "relu":                    # inicjalizacja He dla ReLU
+        if self.activation.name == "relu": 
+            # inicjalizacja He dla ReLU
             self.W = rng.normal(0.0, np.sqrt(2.0 / n_in), size=(n_in, n_out))
-        else:                                                 # Xavier dla pozostałych
+        else: 
+            # Xavier dla pozostałych
             limit = np.sqrt(6.0 / (n_in + n_out))
             self.W = rng.uniform(-limit, limit, size=(n_in, n_out))
         self.b = np.zeros(n_out) if use_bias else None
@@ -56,7 +58,7 @@ class Dense:
 class History:
     """Przebieg uczenia - dane wejściowe do wizualizacji."""
     metric_name: str = ""
-    batch_loss: list = field(default_factory=list)       # błąd każdej iteracji (mini-batcha)
+    batch_loss: list = field(default_factory=list)       # błąd każdej iteracji mini-batcha
     loss: list = field(default_factory=list)             # błąd na całym zbiorze uczącym, po każdej epoce
     val_loss: list = field(default_factory=list)
     metric: list = field(default_factory=list)           # accuracy (klasyfikacja) lub R^2 (regresja)
@@ -97,7 +99,7 @@ class MLP:
         self.layers = [Dense(layer_sizes[i], layer_sizes[i + 1], activations[i], use_bias, self.rng)
                        for i in range(n_layers)]
 
-    # ------------------------------------------------------------------ propagacja
+    # propagacja
     def _forward(self, X):
         for layer in self.layers:
             X = layer.forward(X)
@@ -112,7 +114,7 @@ class MLP:
             grad = layer.backward(grad)
         return loss, [g for layer in self.layers for g in layer.grads()]
 
-    # ------------------------------------------------------------------ dane
+    # dane
     @staticmethod
     def _as2d(X):
         X = np.asarray(X, dtype=float)
@@ -138,7 +140,7 @@ class MLP:
         """Kopie wag: lista po warstwach, w każdej [W] albo [W, b]."""
         return [[p.copy() for p in layer.params()] for layer in self.layers]
 
-    # ------------------------------------------------------------------ uczenie
+    # uczenie
     def fit(self, X, y, epochs=100, batch_size=32, optimizer=None,
             X_val=None, y_val=None, snapshot_every=None):
         """Uczy sieć metodą propagacji wstecznej z wybranym optymalizatorem (domyślnie SGD(lr=0.01)).
@@ -191,7 +193,7 @@ class MLP:
                 break
         return history
 
-    # ------------------------------------------------------------------ użycie
+    # użycie
     def predict_proba(self, X):
         """Surowe wyjście sieci (klasyfikacja: prawdopodobieństwa klas z softmax)."""
         return self._forward(self._as2d(X)).copy()

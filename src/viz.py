@@ -4,9 +4,6 @@
     plot_classification(net, X, y, ...)   dane i obszary decyzyjne sieci (R^2)
     plot_loss(history)                    błąd po iteracjach i metryka po epokach
     plot_weight_trajectories(history)     wartości wag w kolejnych epokach
-
-Jeśli sieć była uczona na danych przeskalowanych (Standardizer), podaj x_scaler / y_scaler,
-a wykresy będą rysowane w oryginalnych jednostkach.
 """
 import os
 
@@ -14,7 +11,7 @@ import matplotlib.pyplot as plt
 import numpy as np
 
 COLORS = ["#2a78d6", "#eb6834", "#1baf7a", "#eda100", "#e87ba4", "#008300", "#6250d6", "#e34948"]
-MARKERS = ["o", "s", "^", "D", "v", "P", "X", "h"]   # kształt jako drugi kanał kodowania klasy
+MARKERS = ["o", "X", "^", "D", "v", "P", "s", "h"]   # kształt jako drugi kanał kodowania klasy
 
 
 def save_figure(fig, path, dpi=150):
@@ -105,7 +102,8 @@ def plot_weight_trajectories(history, max_lines=40):
     Wymaga fit(..., snapshot_every=k). Przy dużej liczbie wag rysowana jest równomierna próbka."""
     snapshots, epochs = history.snapshots, history.snapshot_epochs
     n_layers = len(snapshots[0])
-    n_cols = min(n_layers, 3)
+    # n_cols = min(n_layers, 3)
+    n_cols = n_layers
     fig, axes = plt.subplots(-(-n_layers // n_cols), n_cols, figsize=(4.5 * n_cols, 3.2 * -(-n_layers // n_cols)),
                              squeeze=False)
     for layer in range(n_layers):
