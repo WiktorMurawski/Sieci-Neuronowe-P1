@@ -1,7 +1,8 @@
 """Eksperymenty: A - funkcje aktywacji, B - liczba warstw i neuronów, C - miary błędu.
 
-Uruchomienie bez argumentów:  python experiments.py
+Uruchomienie bez argumentów (z dowolnego katalogu):  python src/experiments.py
 
+Układ folderów:  projekt/src/ (kod), projekt/classification/, projekt/regression/ (dane), projekt/results/ (wyniki).
 Skrypt bierze wszystkie pary data.<nazwa>.train.<N>.csv + data.<nazwa>.test.<N>.csv z folderów
 classification/ i regression/. Dla każdej pary i każdej konfiguracji sieci:
   1. z pliku train odkłada 20% na walidację,
@@ -9,13 +10,6 @@ classification/ i regression/. Dla każdej pary i każdej konfiguracji sieci:
   3. uczy sieć dla wszystkich ziaren i liczy wyniki na pliku test (test nie służy do wyborów).
 Na końcu wypisuje tabele i zapisuje je (z wykresami sieci referencyjnej) do folderu results/.
 """
-
-import os
-for name in ("OMP_NUM_THREADS", "OPENBLAS_NUM_THREADS", "MKL_NUM_THREADS"):
-    os.environ.setdefault(name, "1")
-
-from concurrent.futures import ProcessPoolExecutor
-
 import re
 import warnings
 from pathlib import Path
@@ -33,12 +27,13 @@ from optimizers import SGD
 warnings.filterwarnings("ignore")
 np.seterr(all="ignore")
 
-ROOT = Path(__file__).resolve().parent.parent
+ROOT = Path(__file__).resolve().parent.parent     # folder projektu: obok src/ leżą classification/ i regression/
 OUT = ROOT / "results"
 SEEDS = range(5)                # ziarna generatora liczb losowych
 LRS = (0.1, 0.01, 0.001)        # sprawdzane kroki uczenia
 MOMENTUM = 0.9                  # SGD z momentum (0 = zwykły SGD)
 MIN_EPOCHS = 100
+PLOT_POINTS = 150               # tyle punktów (uczących i testowych) rysujemy na wykresach
 MIN_ITERATIONS = 3000           # tyle aktualizacji wag co najmniej (dla małych zbiorów epok jest więcej)
 DEFAULT_LOSS = {"classification": "cross_entropy", "regression": "mse"}
 REFERENCE = ("A", "tanh")       # konfiguracja, której wykresy zapisujemy
@@ -57,7 +52,7 @@ def configs(task):
     result.append(("B", "0 warstw", [], "tanh", loss))                   # B
     for n_layers in (1, 2, 3, 4):
         for w in (8, 32):
-            result.append(("B", f"{n_layers}x{w}", [w] * n_layers, "tanh", loss))
+            result.append(("B", f"{n_layers}×{w}", [w] * n_layers, "tanh", loss))
     other_loss = "mse" if task == "classification" else "mae"            # C
     result.append(("C", loss, [width, width], "tanh", loss))
     result.append(("C", other_loss, [width, width], "tanh", other_loss))
@@ -131,8 +126,8 @@ def run_config(data, hidden, activation, loss):
 def save_figures(data, hidden, lr, name):
     """Wykresy sieci referencyjnej: wynik, błąd po iteracjach, ewolucja wag."""
     net, history = train(data, hidden, "tanh", DEFAULT_LOSS[data.task], lr, seed=0, snapshots=True)
-    X, y = data.X_train[:500], data.y_train[:500]                         # na wykresie najwyżej 500 punktów
-    sample = np.random.default_rng(0).permutation(len(data.X_test))[:500]
+    X, y = data.X_train[:PLOT_POINTS], data.y_train[:PLOT_POINTS]         # na wykresie najwyżej PLOT_POINTS punktów
+    sample = np.random.default_rng(0).permutation(len(data.X_test))[:PLOT_POINTS]
     X_test, y_test = data.X_test[sample], data.y_test[sample]
     title = f"{name} (lr={lr})"
     if data.task == "classification":
@@ -192,15 +187,10 @@ def main():
         raise SystemExit(f"Nie znaleziono plików data.*.train.*.csv w {ROOT / 'classification'} ani {ROOT / 'regression'}")
 
     (OUT / "figures").mkdir(parents=True, exist_ok=True)
-    # rows = []
-    # for i, (task, train_path, test_path) in enumerate(pairs, 1):
-    #     print(f"[{i}/{len(pairs)}] {task}/{train_path.name}", flush=True)
-    #     rows += run_pair(task, train_path, test_path)
     rows = []
-    with ProcessPoolExecutor() as executor:
-        for i, pair_rows in enumerate(executor.map(run_pair, *zip(*pairs)), 1):
-            rows += pair_rows
-            print(f"[{i}/{len(pairs)}] gotowe", flush=True)
+    for i, (task, train_path, test_path) in enumerate(pairs, 1):
+        print(f"[{i}/{len(pairs)}] {task}/{train_path.name}", flush=True)
+        rows += run_pair(task, train_path, test_path)
 
     df = pd.DataFrame(rows)
     df.to_csv(OUT / "results.csv", index=False)                       # wszystkie pojedyncze uruchomienia
