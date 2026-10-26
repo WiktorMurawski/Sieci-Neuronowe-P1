@@ -4,9 +4,6 @@
     plot_classification(net, X, y, ...)   dane i obszary decyzyjne sieci (R^2)
     plot_loss(history)                    błąd po iteracjach i metryka po epokach
     plot_weight_trajectories(history)     wartości wag w kolejnych epokach
-
-Jeśli sieć była uczona na danych przeskalowanych (Standardizer), podaj x_scaler / y_scaler,
-a wykresy będą rysowane w oryginalnych jednostkach.
 """
 import os
 
@@ -14,7 +11,7 @@ import matplotlib.pyplot as plt
 import numpy as np
 
 COLORS = ["#2a78d6", "#eb6834", "#1baf7a", "#eda100", "#e87ba4", "#008300", "#6250d6", "#e34948"]
-MARKERS = ["o", "s", "^", "D", "v", "P", "X", "h"]   # kształt jako drugi kanał kodowania klasy
+MARKERS = ["o", "s", "^", "D", "v", "P", "X", "h"]
 
 plt.rcParams.update({"font.size": 9, "axes.titlesize": 10, "legend.fontsize": 8, "lines.linewidth": 1.2})
 
@@ -39,13 +36,13 @@ def plot_regression(net, X, y, X_test=None, y_test=None, x_scaler=None, y_scaler
 
     fig, ax = plt.subplots(figsize=(6, 3.4))
     ax.axvspan(X.min(), X.max(), color="gray", alpha=0.08, label="zakres danych uczących")
-    if X_test is not None:                                   # test: małe punkty z tyłu, żeby nie zasłaniały reszty
+    if X_test is not None:
         X_test = np.asarray(X_test, float).reshape(len(X_test), -1)
         ax.scatter(X_test[:, 0], y_test, s=5, color=COLORS[1], alpha=0.6, linewidths=0,
                    label=f"zbiór testowy ({len(X_test)} pkt)", zorder=1)
     ax.plot(grid[:, 0], curve[:, 0], color=COLORS[0], lw=1.2, label="sieć", zorder=3)
     ax.scatter(X[:, 0], y, s=10, color="black", edgecolors="white", linewidths=0.3,
-               label=f"zbiór uczący ({len(X)} pkt)", zorder=5)  # uczący na wierzchu, żeby było go widać
+               label=f"zbiór uczący ({len(X)} pkt)", zorder=5)
     ax.set(xlabel="x", ylabel="y", title=title or "Regresja")
     ax.legend()
     ax.grid(alpha=0.3, lw=0.5)
@@ -63,7 +60,7 @@ def plot_classification(net, X, y, X_test=None, y_test=None, x_scaler=None, titl
     points = np.c_[gx.ravel(), gy.ravel()]
     if x_scaler is not None:
         points = x_scaler.transform(points)
-    zone = net.predict_proba(points).argmax(axis=1).reshape(gx.shape)   # numer klasy przewidzianej w każdym punkcie
+    zone = net.predict_proba(points).argmax(axis=1).reshape(gx.shape)
 
     n_classes = len(net.classes_)
     fig, ax = plt.subplots(figsize=(5.2, 4.2))
@@ -110,7 +107,7 @@ def layer_name(layer, n_layers):
     return "warstwa wyjściowa" if layer == n_layers - 1 else f"warstwa ukryta {layer + 1}"
 
 
-def plot_weight_trajectories(history, max_lines=20):
+def plot_weight_trajectories(history, max_lines=32):
     """Wartości wag (niebieskie, ciągłe) i biasów (pomarańczowe, przerywane) w kolejnych epokach; panel na warstwę.
     Wymaga fit(..., snapshot_every=k). Przy dużej liczbie wag rysowana jest równomierna próbka."""
     snapshots, epochs = history.snapshots, history.snapshot_epochs
@@ -120,14 +117,14 @@ def plot_weight_trajectories(history, max_lines=20):
                              squeeze=False)
     for layer in range(n_layers):
         ax = axes.flat[layer]
-        weights = np.array([snap[layer][0].ravel() for snap in snapshots])        # (migawki, liczba wag)
+        weights = np.array([snap[layer][0].ravel() for snap in snapshots])
         pick = np.linspace(0, weights.shape[1] - 1, min(weights.shape[1], max_lines)).astype(int)
         ax.plot(epochs, weights[:, pick], color=COLORS[0], alpha=0.5, lw=0.7)
-        if len(snapshots[0][layer]) > 1:                                          # są biasy
+        if len(snapshots[0][layer]) > 1:
             biases = np.array([snap[layer][1] for snap in snapshots])
             ax.plot(epochs, biases[:, :max_lines], color=COLORS[1], alpha=0.8, lw=0.7, ls="--")
         ax.set(title=layer_name(layer, n_layers), xlabel="epoka", ylabel="wartość")
-        ax.plot([], [], color=COLORS[0], lw=0.7, label="wagi")                     # wpis do legendy
+        ax.plot([], [], color=COLORS[0], lw=0.7, label="wagi")
         if len(snapshots[0][layer]) > 1:
             ax.plot([], [], color=COLORS[1], lw=0.7, ls="--", label="biasy")
         ax.legend(loc="best")

@@ -31,10 +31,10 @@ ROOT = Path(__file__).resolve().parent.parent     # folder projektu: obok src/ l
 OUT = ROOT / "results"
 SEEDS = range(5)                # ziarna generatora liczb losowych
 LRS = (0.1, 0.01, 0.001)        # sprawdzane kroki uczenia
-MOMENTUM = 0.9                  # SGD z momentum (0 = zwykły SGD)
+MOMENTUM = 0.9                  # SGD z momentum (0.0 = zwykły SGD)
 MIN_EPOCHS = 100
-PLOT_POINTS = 150               # tyle punktów (uczących i testowych) rysujemy na wykresach
-MIN_ITERATIONS = 3000           # tyle aktualizacji wag co najmniej (dla małych zbiorów epok jest więcej)
+PLOT_POINTS = 150               # maksymalnie tyle punktów (uczących i testowych) rysujemy na wykresach
+MIN_ITERATIONS = 3000           # tyle co najmniej aktualizacji wag 
 DEFAULT_LOSS = {"classification": "cross_entropy", "regression": "mse"}
 REFERENCE = ("A", "tanh")       # konfiguracja, której wykresy zapisujemy
 METRIC_NAMES = {("classification", "metric"): "accuracy (test)", ("classification", "metric2"): "cross-entropy (test)",
@@ -47,13 +47,16 @@ def configs(task):
     loss = DEFAULT_LOSS[task]
     width = 16 if task == "classification" else 32
     result = []
-    for activation in ("sigmoid", "tanh", "relu"):                       # A
+    # A
+    for activation in ("sigmoid", "tanh", "relu"):
         result.append(("A", activation, [width, width], activation, loss))
-    result.append(("B", "0 warstw", [], "tanh", loss))                   # B
+    result.append(("B", "0 warstw", [], "tanh", loss))
+    # B
     for n_layers in (1, 2, 3, 4):
         for w in (8, 32):
-            result.append(("B", f"{n_layers}×{w}", [w] * n_layers, "tanh", loss))
-    other_loss = "mse" if task == "classification" else "mae"            # C
+            result.append(("B", f"{n_layers}x{w}", [w] * n_layers, "tanh", loss))
+    other_loss = "mse" if task == "classification" else "mae"
+    # C
     result.append(("C", loss, [width, width], "tanh", loss))
     result.append(("C", other_loss, [width, width], "tanh", other_loss))
     return result
@@ -109,7 +112,7 @@ def test_metrics(net, data):
 
 def run_once(data, hidden, activation, loss, lr, seed):
     net, history = train(data, hidden, activation, loss, lr, seed)
-    if not (np.isfinite(history.loss[-1]) and np.isfinite(history.val_loss[-1])):    # uczenie się rozbiegło
+    if not (np.isfinite(history.loss[-1]) and np.isfinite(history.val_loss[-1])): # uczenie się rozbiegło
         return {"val_loss": np.inf, "metric": np.nan, "metric2": np.nan}
     metric, metric2 = test_metrics(net, data)
     return {"val_loss": history.val_loss[-1], "metric": metric, "metric2": metric2}
@@ -126,7 +129,7 @@ def run_config(data, hidden, activation, loss):
 def save_figures(data, hidden, lr, name):
     """Wykresy sieci referencyjnej: wynik, błąd po iteracjach, ewolucja wag."""
     net, history = train(data, hidden, "tanh", DEFAULT_LOSS[data.task], lr, seed=0, snapshots=True)
-    X, y = data.X_train[:PLOT_POINTS], data.y_train[:PLOT_POINTS]         # na wykresie najwyżej PLOT_POINTS punktów
+    X, y = data.X_train[:PLOT_POINTS], data.y_train[:PLOT_POINTS]
     sample = np.random.default_rng(0).permutation(len(data.X_test))[:PLOT_POINTS]
     X_test, y_test = data.X_test[sample], data.y_test[sample]
     title = f"{name} (lr={lr})"
@@ -168,7 +171,7 @@ def make_tables(df):
                 g["cell"] = g["mean"].map("{:.4g}".format) + " ± " + g["std"].map("{:.2g}".format) \
                     + " (" + g["lr"].astype(str) + ")"
                 table = g.pivot(index=["dataset", "N"], columns="label", values="cell")
-                table = table[list(dict.fromkeys(part["label"]))]       # kolejność kolumn jak w configs()
+                table = table[list(dict.fromkeys(part["label"]))]
                 text.append(f"\n{experiment}. {experiment_name} - {task} - {METRIC_NAMES[(task, column)]}\n"
                             + table.to_string())
     return "\n".join(text)
@@ -193,7 +196,7 @@ def main():
         rows += run_pair(task, train_path, test_path)
 
     df = pd.DataFrame(rows)
-    df.to_csv(OUT / "results.csv", index=False)                       # wszystkie pojedyncze uruchomienia
+    df.to_csv(OUT / "results.csv", index=False)
     text = make_tables(df)
     (OUT / "results.txt").write_text(text, encoding="utf-8")
     print("\n" + text)

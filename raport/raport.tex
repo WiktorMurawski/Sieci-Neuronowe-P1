@@ -1,0 +1,443 @@
+\documentclass[11pt,a4paper]{article}
+
+\usepackage[T1]{fontenc}
+\usepackage[utf8]{inputenc}
+\usepackage[polish]{babel}
+\usepackage{lmodern}
+\usepackage[margin=2.5cm]{geometry}
+\usepackage{amsmath,amssymb}
+\usepackage{booktabs}
+\usepackage{graphicx}
+\usepackage{xcolor}
+\usepackage[hidelinks]{hyperref}
+\usepackage{float}
+
+% Miejsca do uzupełnienia (usuń po wypełnieniu: wyszukaj "TODO").
+\newcommand{\todo}[1]{\textcolor{red}{[TODO: #1]}}
+
+% Rysunek z katalogu wyników; gdy pliku jeszcze nie ma, pokazuje ramkę (raport się kompiluje).
+% Użycie: \safefig{nazwa_pliku.png}{Podpis}{etykieta}
+\newcommand{\safefig}[4][0.9\linewidth]{%
+	\begin{figure}[H]\centering
+		\IfFileExists{#2}%
+		{\includegraphics[width=#1]{#2}}%
+		{\fbox{\parbox{#1}{\centering\todo{brak pliku \detokenize{#2}}}}}
+		\caption{#3}\label{#4}
+\end{figure}}
+
+\newcommand{\mat}[1]{\mathbf{#1}}
+\newcommand{\hadamard}{\odot}
+
+\title{Projekt 1: perceptron wielowarstwowy\\ w zadaniach klasyfikacji i regresji\\część 1}
+\author{Wiktor Murawski, 333255}
+\date{\today}
+
+\begin{document}
+	\maketitle
+	
+	\begin{abstract}
+		Zaimplementowano od podstaw perceptron wielowarstwowy uczony metodą propagacji wstecznej błędu z użyciem mini-batchowego gradientu prostego z momentem. Zbadano wpływ funkcji aktywacji, liczby warstw ukrytych i ich liczności oraz miary błędu na skuteczność klasyfikacji punktów na płaszczyźnie i regresji funkcji jednej zmiennej. Każdą konfigurację uczono wielokrotnie, dla różnych ziaren generatora liczb losowych, aby ocenić powtarzalność wyników. 
+		%\todo{dopisz 1--2 zdania z najważniejszymi wnioskami}
+	\end{abstract}
+	
+	%==============================================================================
+	\section{Opis problemu}
+	%==============================================================================
+	
+	\subsection{Zadanie}
+	Uczenie nadzorowane polega na znalezieniu funkcji $\hat{\mat y}=F(\mat x)$, która dla wektora wejściowego $\mat x$ przewiduje wartość oczekiwaną $\mat y$, na podstawie zbioru przykładów $\{(\mat x_i,\mat y_i)\}$. W projekcie rozważamy dwa rodzaje zadań:
+	\begin{itemize}
+		\item \emph{klasyfikację}: wejściem jest punkt $\mat x\in\mathbb{R}^2$, a wyjściem etykieta jednej z $K$ klas;
+		\item \emph{regresję}: wejściem jest liczba $x\in\mathbb{R}$, a wyjściem wartość rzeczywista $y\in\mathbb{R}$ (aproksymacja funkcji $\mathbb{R}\to\mathbb{R}$).
+	\end{itemize}
+	Funkcję $F$ realizuje perceptron wielowarstwowy (MLP) \cite{rumelhart1986}, czyli sieć kolejnych warstw, z których każda wykonuje przekształcenie liniowe, a następnie nieliniową funkcję aktywacji. Parametry sieci (wagi i biasy) dobierane są przez minimalizację funkcji błędu na zbiorze uczącym metodą propagacji wstecznej błędu \cite{rumelhart1986}.
+	
+	\subsection{Cele projektu}
+	Celem jest samodzielna, modularna implementacja MLP bez użycia bibliotek do sieci neuronowych, wraz z wizualizacją wyników uczenia, przebiegu błędu i ewolucji wag, oraz zbadanie, jak na skuteczność sieci wpływają:
+	\begin{enumerate}
+		\item funkcja aktywacji w warstwach ukrytych (sigmoidalna i dwie inne wybrane),
+		\item liczba warstw ukrytych (od 0 do 4) i liczba neuronów w warstwie,
+		\item miara błędu na wyjściu sieci (dwie dla klasyfikacji i dwie dla regresji).
+	\end{enumerate}
+	Ponieważ uczenie zaczyna się od losowych wag, wyniki każdej konfiguracji uśredniamy po wielu uruchomieniach z różnymi ziarnami generatora i podajemy ich rozrzut. W drugiej części projektu ta sama implementacja ma zostać użyta do rozpoznawania odręcznych cyfr ze zbioru MNIST \cite{lecun1998}.
+	
+	\subsection{Zbiory danych}
+	Dane udostępnione w ramach projektu mają postać plików CSV, osobno do uczenia (\texttt{train}) i testowania (\texttt{test}), w kilku rozmiarach. Zbiór testowy służy wyłącznie do końcowej oceny nauczonej sieci.
+	
+	\begin{table}[H]
+		\centering
+		\caption{Zbiory danych użyte w projekcie.}\label{tab:datasets}
+		\begin{tabular}{@{}llp{8.2cm}@{}}
+			\toprule
+			Nazwa & Zadanie & Opis \\
+			\midrule
+			\texttt{simple} & klasyfikacja, 2 klasy &
+			Punkty z kwadratu $[-1,1]^2$, klasy w przybliżeniu równoliczne. Klasa 1 leży po stronie $x+y>0$, klasa 2 po stronie $x+y<0$. W plikach uczących tylko pojedyncze punkty leżące bardzo blisko prostej mają etykietę niezgodną z tą regułą, więc zbiór jest praktycznie liniowo rozdzielny.\\
+			\texttt{three\_gauss} & klasyfikacja, 3 klasy &
+			Trzy skupiska o równej liczności. Środki ok. $(0{,}1;\,0{,}5)$, $(-0{,}6;\,0{,}2)$ i $(0;\,-0{,}3)$, odchylenia standardowe współrzędnych ok. $(0{,}2;\,0{,}2)$, $(0{,}2;\,0{,}05)$ i $(0{,}17;\,0{,}4)$. Klasa 3 jest wydłużona w pionie i zachodzi na pozostałe, najbardziej na klasę 1.\\
+			\texttt{activation} & regresja &
+			$y=300\,(\sigma(x)-1)$, gdzie $\sigma(x)=1/(1+e^{-x})$. Pliki uczące: $x\in[-2,5]$, $y$ od ok.\ $-264$ do $-2$, niewielki szum. Pliki testowe:  bezszumowa siatka $x\in[-5,7]$, $y$ od ok.\ $-298$ do $-0{,}3$.\\
+			\texttt{cube} & regresja &
+			Wielomian trzeciego stopnia $y=4x^3-23x^2+34x-8$ (współczynniki odtworzone z dopasowania do plików uczących). Pliki uczące: $x\in[-2,5]$, $y$ od ok.\ $-198$ do $86$, niewielki szum. Pliki testowe: bezszumowa siatka $x\in[-5,7]$, $y$ od $-1253$ do $475$.\\
+			\bottomrule
+		\end{tabular}
+	\end{table}
+	
+	W obu zbiorach regresji zakres $x$ w plikach testowych jest szerszy niż w uczących: tylko 57--58\% punktów testowych leży w zakresie $[-2,5]$, pozostałe wymagają \emph{ekstrapolacji}. Sieć MLP nie ma mechanizmu, który kazałby jej kontynuować funkcję poza zakresem danych (aktywacje typu tanh i sigmoida się tam nasycają), więc błąd testowy na całym zakresie jest dominowany przez brzegi. Uwzględniamy to w interpretacji wyników regresji.
+	
+	\subsection{Miary jakości}
+	Dla klasyfikacji podajemy dokładność (accuracy), czyli odsetek poprawnie sklasyfikowanych próbek zbioru testowego, oraz entropię krzyżową. Dla regresji podajemy pierwiastek błędu średniokwadratowego (RMSE) i średni błąd bezwzględny (MAE), liczone w oryginalnych jednostkach zmiennej $y$.
+	
+	%==============================================================================
+	\section{Sieć neuronowa i jej implementacja}
+	%==============================================================================
+	
+	\subsection{Model}
+	Sieć ma $L$ warstw ($L-1$ warstw ukrytych i warstwę wyjściową). Dla paczki $n$ próbek, zapisanych jako wiersze macierzy $\mat X\in\mathbb{R}^{n\times d}$, obliczenia w warstwie $l=1,\dots,L$ mają postać
+	\begin{equation}
+		\mat Z^{(l)}=\mat A^{(l-1)}\mat W^{(l)}+\mat 1\,\mat b^{(l)},\qquad
+		\mat A^{(l)}=f_l\!\left(\mat Z^{(l)}\right),\qquad \mat A^{(0)}=\mat X,
+	\end{equation}
+	gdzie $\mat W^{(l)}\in\mathbb{R}^{n_{l-1}\times n_l}$ to macierz wag, $\mat b^{(l)}\in\mathbb{R}^{1\times n_l}$ wektor biasów (wiersz $\mat 1\,\mat b^{(l)}$ dodawany jest do każdej próbki), a $f_l$ funkcja aktywacji. Wyjściem sieci jest $\hat{\mat Y}=\mat A^{(L)}$. Liczbę warstw ukrytych i neuronów w każdej z nich oraz obecność biasów ustawia się parametrami konstruktora. Sieć bez warstw ukrytych ($L=1$) jest modelem liniowym (regresją liniową lub regresją softmax).
+	
+	\subsection{Funkcje aktywacji}
+	Zaimplementowano funkcje z tabeli~\ref{tab:act}. W warstwach ukrytych badamy funkcję sigmoidalną, tangens hiperboliczny i ReLU \cite{nair2010}.
+	
+	\begin{table}[H]
+		\centering
+		\caption{Funkcje aktywacji i ich pochodne.}\label{tab:act}
+		\begin{tabular}{@{}lll@{}}
+			\toprule
+			Funkcja & $f(z)$ & $f'(z)$ \\
+			\midrule
+			sigmoidalna & $\sigma(z)=\dfrac{1}{1+e^{-z}}$ & $\sigma(z)\,(1-\sigma(z))$ \\[2mm]
+			tangens hiperboliczny & $\tanh(z)$ & $1-\tanh^2(z)$ \\[1mm]
+			ReLU & $\max(0,z)$ & $1$ dla $z>0$, $0$ w przeciwnym razie \\
+			liniowa & $z$ & $1$ \\[1mm]
+			softmax (wektor $\mat z$) & $a_i=\dfrac{e^{z_i}}{\sum_j e^{z_j}}$ & $\dfrac{\partial a_i}{\partial z_j}=a_i(\delta_{ij}-a_j)$ \\
+			\bottomrule
+		\end{tabular}
+	\end{table}
+	
+	\paragraph{Aktywacja wyjściowa.} Musi odpowiadać rodzajowi zadania. W \emph{klasyfikacji} warstwa wyjściowa ma tyle neuronów, ile jest klas, a etykiety kodowane są wektorami jednostkowymi (one-hot); aktywacja \emph{softmax} daje wtedy wyjścia nieujemne o sumie $1$, interpretowane jako prawdopodobieństwa klas. W \emph{regresji} wyjście jest pojedynczą liczbą o nieograniczonym zakresie (w zbiorze \texttt{cube} wartości sięgają tysięcy), dlatego stosujemy aktywację \emph{liniową}.
+	
+	\subsection{Funkcje błędu}
+	Niech $\hat y_{ij}$ będzie wyjściem sieci, a $y_{ij}$ wartością oczekiwaną dla próbki $i$ i wyjścia $j$ ($k$ wyjść). Zaimplementowano:
+	\begin{align}
+		L_{\mathrm{MSE}} &= \frac{1}{nk}\sum_{i,j}(\hat y_{ij}-y_{ij})^2, &
+		L_{\mathrm{MAE}} &= \frac{1}{nk}\sum_{i,j}\lvert\hat y_{ij}-y_{ij}\rvert, \\
+		L_{\mathrm{CE}} &= -\frac{1}{n}\sum_{i}\sum_{j} y_{ij}\ln \hat y_{ij}. & &
+	\end{align}
+	Dla regresji badamy MSE i MAE, a dla klasyfikacji entropię krzyżową (CE) i MSE liczony między wyjściem softmax a wektorem one-hot. Pochodna MAE względem wyjścia to $\operatorname{sgn}(\hat y-y)/(nk)$ (podgradient, równy $0$ w zerze).
+	
+	\subsection{Propagacja wsteczna}
+	Algorytm propagacji wstecznej \cite{rumelhart1986} oblicza gradient błędu $L$ względem wszystkich parametrów, wykorzystując regułę łańcuchową. Oznaczmy $\mat G^{(l)}=\partial L/\partial\mat A^{(l)}$ i $\mat\Delta^{(l)}=\partial L/\partial\mat Z^{(l)}$. Dla warstwy wyjściowej $\mat G^{(L)}$ wynika bezpośrednio z funkcji błędu. Następnie dla $l=L,\dots,1$:
+	\begin{align}
+		\mat\Delta^{(l)} &= \mat G^{(l)}\hadamard f_l'\!\left(\mat Z^{(l)}\right)
+		\quad\text{(dla softmax: } \Delta_{ij}=a_{ij}\bigl(G_{ij}-\textstyle\sum_c G_{ic}a_{ic}\bigr)\text{)},\\
+		\frac{\partial L}{\partial\mat W^{(l)}} &= \mat A^{(l-1)\top}\mat\Delta^{(l)}, \qquad
+		\frac{\partial L}{\partial\mat b^{(l)}} = \mat 1^{\top}\mat\Delta^{(l)}, \qquad
+		\mat G^{(l-1)} = \mat\Delta^{(l)}\mat W^{(l)\top}.
+	\end{align}
+	Dla softmax połączonego z entropią krzyżową powyższe wyrażenie upraszcza się do $\mat\Delta^{(L)}=(\hat{\mat Y}-\mat Y)/n$; implementacja nie korzysta z tego skrótu, lecz z ogólnej reguły, więc każdą aktywację można łączyć z każdą funkcją błędu.
+	
+	\subsection{Inicjalizacja wag i optymalizator}
+	Biasy inicjowane są zerami. Wagi inicjowane są losowo: dla sigmoidy, tanh, aktywacji liniowej i softmax metodą Xaviera (Glorota) \cite{glorot2010}, $W_{ij}\sim\mathcal{U}(-a,a)$, $a=\sqrt{6/(n_{\mathrm{in}}+n_{\mathrm{out}})}$, a dla ReLU metodą He \cite{he2015}, $W_{ij}\sim\mathcal{N}(0,\,2/n_{\mathrm{in}})$.
+	
+	Uczenie to mini-batchowy gradient prosty (SGD) z momentem \cite{polyak1964}. Dla parametrów $\theta$ i gradientu $g$ obliczonego na paczce
+	\begin{equation}
+		v \leftarrow \mu v - \eta\, g, \qquad \theta \leftarrow \theta + v,
+	\end{equation}
+	gdzie $\eta$ jest krokiem uczenia, a $\mu$ współczynnikiem momentum ($\mu=0$ daje zwykły SGD). W każdej epoce próbki są losowo tasowane i dzielone na paczki.
+	
+	\subsection{Implementacja}
+	Kod napisano w Pythonie z użyciem biblioteki NumPy do obliczeń sieci. Moduły:
+	\begin{itemize}
+		\item \texttt{activations.py} -- funkcje aktywacji; każda ma metody \texttt{forward} i \texttt{backward},
+		\item \texttt{losses.py} -- funkcje błędu (wartość i gradient),
+		\item \texttt{optimizers.py} -- klasa bazowa \texttt{Optimizer} i dziedzicząca po niej klasa \texttt{SGD},
+		\item \texttt{mlp.py} -- warstwa \texttt{Dense}, obiekt \texttt{History} z przebiegiem uczenia i klasa \texttt{MLP},
+		\item \texttt{data.py} -- wczytywanie plików CSV, podział na zbiory i standaryzacja,
+		\item \texttt{viz.py} -- wizualizacje, \texttt{experiments.py} -- skrypt eksperymentów, \texttt{test\_mlp.py} -- testy.
+	\end{itemize}
+	Interfejs wzorowany jest na bibliotekach do uczenia maszynowego:
+	\begin{verbatim}
+		net = MLP([2, 16, 16, 3], hidden_activation="tanh", task="classification",
+		loss="cross_entropy", use_bias=True, seed=42)
+		history = net.fit(X_train, y_train, epochs=200, batch_size=32,
+		optimizer=SGD(lr=0.05, momentum=0.9), X_val=X_val, y_val=y_val)
+		net.predict(X_test); net.predict_proba(X_test); net.score(X_test, y_test)
+	\end{verbatim}
+	\paragraph{Wydajność.} Wszystkie obliczenia wykonywane są na macierzach całej paczki próbek (mnożenia macierzy NumPy), bez pętli po neuronach czy próbkach; pętle występują tylko po warstwach i paczkach.
+	
+	\paragraph{Powtarzalność.} Wagi początkowe i kolejność próbek w epokach pochodzą z jednego generatora \texttt{numpy.random.default\_rng(seed)}, więc ten sam parametr \texttt{seed} i te same dane dają dokładnie ten sam wynik uczenia.
+	
+	\paragraph{Weryfikacja poprawności.} Gradienty z propagacji wstecznej porównano z gradientami numerycznymi (różnice centralne, $\varepsilon=10^{-5}$) dla 40 konfiguracji: 4 funkcje aktywacji ukrytych $\times$ 5 kombinacji aktywacji wyjściowej i funkcji błędu $\times$ sieć z biasami i bez. Względna różnica nie przekraczała $10^{-5}$. Sprawdzono też powtarzalność uczenia dla tego samego ziarna oraz zdolność do nauczenia prostych zadań (klasyfikacja nieseparowalna liniowo, regresja $\sin x$, regresja liniowa bez warstw ukrytych).
+	
+	\subsection{Wizualizacje}
+	Moduł \texttt{viz.py} dostarcza: wykres zbioru i krzywej nauczonej sieci dla regresji, wykres punktów i obszarów decyzyjnych dla klasyfikacji w $\mathbb{R}^2$, przebieg błędu po iteracjach (aktualizacjach wag) i po epokach oraz ewolucję wartości wag i biasów w kolejnych epokach. Do wykresów użyto biblioteki Matplotlib.
+	
+	%==============================================================================
+	\section{Przeprowadzone eksperymenty}
+	%==============================================================================
+	
+	\subsection{Środowisko}
+	Obliczenia wykonano w Pythonie 3.14 z bibliotekami NumPy, pandas i Matplotlib. Parametry uruchomienia i ziarna zapisuje skrypt \texttt{experiments.py}, a pojedyncze wyniki trafiają do pliku \texttt{results.csv}.
+	
+	\subsection{Protokół wspólny dla wszystkich eksperymentów}
+	\begin{itemize}
+		\item \textbf{Podział danych.} Plik \texttt{train} dzielono losowo (ze stałym ziarnem, w klasyfikacji z zachowaniem proporcji klas) na 80\% do uczenia i 20\% do walidacji. Plik \texttt{test} użyto tylko do końcowej oceny.
+		\item \textbf{Skalowanie.} Wejścia, a w regresji także wartości $y$, standaryzowano (średnia $0$, odchylenie $1$) na podstawie części uczącej. Wyniki regresji (RMSE, MAE) przeliczano z powrotem na oryginalne jednostki.
+		\item \textbf{Optymalizator.} SGD z momentem $\mu=0{,}9$. Rozmiar paczki $\max(32,\lfloor n_{\mathrm{ucz}}/30\rfloor)$; liczba epok $\max(100,\ \lfloor 3000/\text{iteracje na epokę}\rfloor)$, tak by wykonać co najmniej około 3000 aktualizacji wag niezależnie od rozmiaru zbioru.
+		\item \textbf{Krok uczenia.} Dla każdej konfiguracji sprawdzono $\eta\in\{0{,}1;\ 0{,}01;\ 0{,}001\}$ (ziarno 0) i wybrano wartość o najmniejszym błędzie na zbiorze walidacyjnym; zbiór testowy nie brał udziału w wyborze. Dzięki temu porównania nie zależą od tego, że jeden wspólny krok pasuje do jednej konfiguracji lepiej niż do innej.
+		\item \textbf{Powtarzalność.} Każdą konfigurację z wybranym krokiem uczono dla 5 ziaren ($0,\dots,4$). Podajemy średnią i odchylenie standardowe wyniku testowego po ziarnach.
+		\item \textbf{Architektura referencyjna.} Dwie warstwy ukryte po 16 neuronów w klasyfikacji i po 32 w regresji, aktywacja tanh, biasy włączone; funkcja błędu: entropia krzyżowa (klasyfikacja) lub MSE (regresja).
+	\end{itemize}
+	Eksperymenty wykonano na wszystkich parach plików \texttt{train}/\texttt{test} każdego zbioru. Dla każdej pary nauczono też sieć referencyjną (ziarno 0) w celu zapisania wykresów z podrozdziału~\ref{sec:viz}.
+	
+	\subsection{Eksperyment A: funkcja aktywacji}
+	Przy stałej architekturze referencyjnej zmieniano aktywację warstw ukrytych: sigmoidalna, tanh i ReLU. Aktywacja wyjściowa była zawsze dobrana do zadania (softmax lub liniowa).
+	
+	\subsection{Eksperyment B: liczba warstw ukrytych i neuronów}
+	Dla aktywacji tanh zbadano: sieć bez warstw ukrytych (model liniowy) oraz sieci z 1, 2, 3 i 4 warstwami ukrytymi, każdą w wariantach po 8 i po 32 neuronów w warstwie (łącznie 9 architektur).
+	
+	\subsection{Eksperyment C: miara błędu}
+	Dla architektury referencyjnej uczono sieć dwiema miarami błędu: w klasyfikacji entropią krzyżową i MSE, w regresji MSE i MAE. Aby porównanie było uczciwe, wszystkie metryki (accuracy i entropię krzyżową w klasyfikacji, RMSE i MAE w regresji) liczono identycznie dla obu wariantów, niezależnie od funkcji, którą uczono sieć.
+	
+	%==============================================================================
+	\section{Wyniki i wnioski}
+	%==============================================================================
+	
+	\subsection{Przykładowe działanie sieci}\label{sec:viz}
+	
+	\safefig{classification_three_gauss_100_wynik.pdf}{Wynik klasyfikacji zbioru \texttt{three\_gauss}: obszary decyzyjne sieci referencyjnej, punkty uczące (pełne) i testowe (puste).}{fig:cls}
+	
+	\safefig{regression_activation_100_wynik.pdf}{Aproksymacja funkcji w zbiorze \texttt{activation} przez sieć referencyjną. Sieć dobrze radzi sobie z aproksymacją wartości funkcji, nawet dla danych spoza przedziału danych uczących.}{fig:reg1}
+	
+	\safefig{regression_cube_100_wynik.pdf}{Aproksymacja funkcji w zbiorze \texttt{cube} przez sieć referencyjną. Na przedziale $x\in[-2,5]$ (w przybliżeniu zakres danych uczących) sieć dobrze radzi sobie z aproksymacją wartości funkcji, natomiast na brzegach zbioru testowego, który wykracza poza zakres zbioru uczącego, widoczne są duże błędy w aproksymacji.}{fig:reg2}
+	
+	\safefig[1.0\linewidth]{classification_three_gauss_10000_blad.pdf}{Przebieg błędu po iteracjach (lewy) i accuracy po epokach (prawy).}{fig:loss}
+	
+	\safefig[1.0\linewidth]{classification_simple_100_wagi.pdf}{Ewolucja wartości wag (niebieskie) i biasów (pomarańczowe) w kolejnych epokach.}{fig:weights}
+	
+	Na rys.~\ref{fig:weights} (zbiór \texttt{simple}, $N=100$) większość wag szybko się stabilizuje, natomiast dwie wagi pierwszej warstwy rosną do końca uczenia. W naszym przebiegu należą one do jednego neuronu, którego wagi są dodatnie i zbliżone, więc neuron ten oblicza w przybliżeniu $x+y$, czyli współrzędną prostopadłą do granicy klas. Zbiór jest liniowo rozdzielny, więc entropia krzyżowa nie ma skończonego minimum: zwiększanie wag (czyli stromości granicy decyzyjnej i pewności odpowiedzi sieci) zawsze zmniejsza stratę. Wzrost jest jednak powolny, a dokładność na zbiorze testowym przestaje się zmieniać.
+	
+	\subsection{Eksperyment A: funkcja aktywacji}
+	Tabele~\ref{tab:A} i~\ref{tab:A_reg} zestawiają wyniki dla wszystkich par plików \texttt{train}/\texttt{test}.
+	
+	\begin{table}[H]
+		\centering
+		\small
+		\caption{Eksperyment A, klasyfikacja: accuracy na zbiorze testowym w \% (średnia $\pm$ odchylenie std z 5 ziaren; w nawiasie wybrany krok uczenia). Pogrubienie wskazuje najlepszą średnią.}\label{tab:A}
+		\begin{tabular}{@{}llccc@{}}
+			\toprule
+			Zbiór & $N$ & sigmoidalna & tanh & ReLU \\
+			\midrule
+			\texttt{simple} & 100 & 99,00 $\pm$ 0,00 (0,1) & 99,00 $\pm$ 0,00 (0,01) & 99,00 $\pm$ 0,00 (0,1) \\
+			& 500 & 99,20 $\pm$ 0,00 (0,1) & 99,20 $\pm$ 0,00 (0,1) & 99,20 $\pm$ 0,14 (0,01) \\
+			& 1000 & \textbf{99,32 $\pm$ 0,08 (0,1)} & 99,18 $\pm$ 0,19 (0,1) & 99,22 $\pm$ 0,13 (0,1) \\
+			& 10000 & \textbf{99,56 $\pm$ 0,16 (0,1)} & 99,39 $\pm$ 0,21 (0,1) & 99,51 $\pm$ 0,12 (0,1) \\
+			\midrule
+			\texttt{three\_gauss} & 100 & 93,07 $\pm$ 0,15 (0,1) & 93,20 $\pm$ 0,18 (0,01) & \textbf{93,40 $\pm$ 0,15 (0,01)} \\
+			& 500 & 93,55 $\pm$ 0,52 (0,1) & 93,67 $\pm$ 0,43 (0,1) & \textbf{93,81 $\pm$ 0,47 (0,1)} \\
+			& 1000 & 93,11 $\pm$ 0,19 (0,1) & 93,39 $\pm$ 0,18 (0,1) & \textbf{93,56 $\pm$ 0,14 (0,01)} \\
+			& 10000 & \textbf{93,76 $\pm$ 0,06 (0,1)} & 93,73 $\pm$ 0,04 (0,1) & 93,70 $\pm$ 0,07 (0,1) \\
+			\bottomrule
+		\end{tabular}
+	\end{table}
+	
+	\begin{table}[H]
+		\centering
+		\small
+		\caption{Eksperyment A, regresja: RMSE na zbiorze testowym (średnia $\pm$ odchylenie std z 5 ziaren; w nawiasie wybrany krok uczenia). Mniej znaczy lepiej. Pogrubienie wskazuje najlepszą średnią.}\label{tab:A_reg}
+		\begin{tabular}{@{}llccc@{}}
+			\toprule
+			Zbiór & $N$ & sigmoidalna & tanh & ReLU \\
+			\midrule
+			\texttt{activation} & 100 & 8,95 $\pm$ 0,91 (0,1) & \textbf{1,45 $\pm$ 0,48 (0,1)} & 35 $\pm$ 12 (0,01) \\
+			& 500 & 8,91 $\pm$ 0,43 (0,1) & \textbf{1,72 $\pm$ 0,61 (0,1)} & 38,9 $\pm$ 3,8 (0,01) \\
+			& 1000 & 8,8 $\pm$ 1,4 (0,1) & \textbf{1,02 $\pm$ 0,51 (0,1)} & 62 $\pm$ 53 (0,1) \\
+			& 10000 & 8,3 $\pm$ 1,6 (0,1) & \textbf{1,04 $\pm$ 0,13 (0,1)} & 41,2 $\pm$ 3,4 (0,01) \\
+			\midrule
+			\texttt{cube} & 100 & 200 $\pm$ 12 (0,1) & 233,7 $\pm$ 3,3 (0,1) & \textbf{160,4 $\pm$ 9,1 (0,01)} \\
+			& 500 & 195,1 $\pm$ 7,2 (0,1) & 228,8 $\pm$ 5,3 (0,1) & \textbf{156,5 $\pm$ 9,2 (0,01)} \\
+			& 1000 & 209,2 $\pm$ 8,6 (0,1) & 235 $\pm$ 15 (0,1) & \textbf{162,8 $\pm$ 8,2 (0,01)} \\
+			& 10000 & 196,6 $\pm$ 6,3 (0,1) & 194,1 $\pm$ 9,7 (0,1) & \textbf{153,4 $\pm$ 5,2 (0,01)} \\
+			\bottomrule
+		\end{tabular}
+	\end{table}
+	
+	\paragraph{Klasyfikacja.} Wybór aktywacji warstw ukrytych praktycznie nie wpływa na wynik. Dla \texttt{simple} accuracy mieści się w przedziale 99,0--99,6\%, a dla \texttt{three\_gauss} w 93,1--93,8\%. Największa różnica między aktywacjami w obrębie jednego wiersza wynosi 0,45~punktu procentowego (\texttt{three\_gauss}, $N=1000$), a odchylenia standardowe dochodzą do 0,5~p.p., więc większość różnic mieści się w rozrzucie wynikającym z losowej inicjalizacji. W trzech wierszach \texttt{three\_gauss} ($N=100$, $500$ i $1000$) sigmoida jest nieco słabsza od tanh i ReLU, ale przy pięciu ziarnach nie traktujemy tego jako wiarygodnej przewagi.
+	Oba poziomy wyglądają na ograniczone przez same dane. W \texttt{simple} dokładność 99,00\% dla $N=100$ jest identyczna dla wszystkich aktywacji i wszystkich ziaren (odchylenie 0), co odpowiada jednemu błędnie sklasyfikowanemu punktowi na 100. W \texttt{three\_gauss} klasy się nakładają, a prosty klasyfikator liniowy (LDA) myli się na tych danych dla ok.\ 7\% punktów (tabela~\ref{tab:datasets}), czyli na poziomie zbliżonym do wyników sieci.
+	
+	\paragraph{Regresja.} W regresji wybór aktywacji ma duże znaczenie, ale jego skutek zależy od zbioru. W \texttt{activation} wyraźnie najlepszy jest tanh (RMSE 1,0--1,7), następnie sigmoida (8,3--9,0), a ReLU jest wielokrotnie gorszy (35--62; przy $N=1000$ odchylenie 53 oznacza bardzo duży rozrzut między ziarnami, prawdopodobnie jedno z nich dało znacznie gorszą sieć). Funkcja docelowa jest sama sigmoidalna i poza zakresem uczącym nasyca się, więc tanh, który też się nasyca, zachowuje się poza tym zakresem podobnie, natomiast ReLU kontynuuje funkcję liniowo i daje duże błędy na brzegach przedziału testowego. Wyjaśnienie to jest zgodne z wykresami (rys.~\ref{fig:reg1}, \ref{fig:reg2}), ale w eksperymentach nie mierzono osobno błędu w zakresie uczącym i poza nim. Przyczyn, dla których sigmoida wypada wyraźnie gorzej od tanh, nie badano.
+	W \texttt{cube} kolejność jest odwrotna: najlepszy jest ReLU (RMSE 153--163), następnie sigmoida (195--209) i tanh (194--235). Błędy rzędu 150--230 są duże na tle zakresu wartości ($-1253$ do $475$), ponieważ dominują je brzegi przedziału testowego, na których funkcja rośnie jak $x^3$. Sieć, niezależnie od aktywacji, nie ma podstaw, by to odtworzyć, a ReLU, kontynuujący funkcję liniowo, myli się tam mniej niż nasycające się sigmoida i tanh. Ranking aktywacji w tym zbiorze dotyczy więc głównie ekstrapolacji i nie należy go odczytywać jako oceny dopasowania w zakresie danych uczących. Zwiększanie $N$ prawie nie zmienia wyników: dodatkowe punkty pochodzą z tego samego zakresu $x$ i nie niosą informacji o funkcji poza nim.
+	
+	\paragraph{Wybrany krok uczenia.} W klasyfikacji w 19 z 24 przypadków wybrano największy sprawdzany krok $\eta=0{,}1$. W regresji sigmoida i tanh miały $\eta=0{,}1$ we wszystkich 8 przypadkach, a ReLU w 7 z 8 przypadków $\eta=0{,}01$, czyli ReLU wymaga mniejszego kroku niż pozostałe aktywacje. Wspólny krok dla wszystkich aktywacji pogorszyłby więc wynik którejś z nich. Jednocześnie tak częsty wybór najwyższej wartości siatki oznacza, że optymalny krok mógł leżeć poza nią.
+	
+	\subsection{Eksperyment B: liczba warstw ukrytych i neuronów}
+	Tabele~\ref{tab:B_simple}--\ref{tab:B_cube} pokazują wyniki dla sieci bez warstw ukrytych (model liniowy) oraz z 1--4 warstwami ukrytymi po 8 lub 32 neurony. Pominięto w nich wybrane kroki uczenia (są w pliku \texttt{results.txt}).
+	
+	\begin{table}[H]
+		\centering
+		\footnotesize
+		\caption{Eksperyment B, zbiór \texttt{simple}: accuracy w \% na zbiorze testowym (średnia $\pm$ odchylenie std z 5 ziaren). $k\times w$ oznacza $k$ warstw ukrytych po $w$ neuronów. Pogrubienie wskazuje najlepszą średnią w kolumnie.}\label{tab:B_simple}
+		\begin{tabular}{@{}lcccc@{}}
+			\toprule
+			Architektura & $N=100$ & $N=500$ & $N=1000$ & $N=10000$ \\
+			\midrule
+			bez warstw ukrytych & 99,00 $\pm$ 0,00 & \textbf{99,40 $\pm$ 0,00} & \textbf{99,58 $\pm$ 0,13} & \textbf{99,64 $\pm$ 0,01} \\
+			$1\times8$ & 99,00 $\pm$ 0,00 & 99,16 $\pm$ 0,09 & 99,04 $\pm$ 0,69 & 99,59 $\pm$ 0,07 \\
+			$1\times32$ & 99,00 $\pm$ 0,00 & 99,12 $\pm$ 0,11 & 99,10 $\pm$ 0,51 & 99,59 $\pm$ 0,03 \\
+			$2\times8$ & 99,00 $\pm$ 0,00 & 99,20 $\pm$ 0,00 & 99,46 $\pm$ 0,17 & 99,42 $\pm$ 0,28 \\
+			$2\times32$ & 99,00 $\pm$ 0,00 & 99,16 $\pm$ 0,09 & 99,36 $\pm$ 0,11 & 99,55 $\pm$ 0,11 \\
+			$3\times8$ & 99,00 $\pm$ 0,00 & 99,24 $\pm$ 0,09 & 99,38 $\pm$ 0,11 & 99,52 $\pm$ 0,18 \\
+			$3\times32$ & 99,00 $\pm$ 0,00 & 99,00 $\pm$ 0,14 & 99,26 $\pm$ 0,54 & 99,61 $\pm$ 0,04 \\
+			$4\times8$ & 99,00 $\pm$ 0,00 & 99,12 $\pm$ 0,18 & 99,38 $\pm$ 0,16 & 99,49 $\pm$ 0,19 \\
+			$4\times32$ & 99,00 $\pm$ 0,00 & 99,16 $\pm$ 0,09 & 99,16 $\pm$ 0,27 & 99,50 $\pm$ 0,10 \\
+			\bottomrule
+		\end{tabular}
+	\end{table}
+	
+	\begin{table}[H]
+		\centering
+		\footnotesize
+		\caption{Eksperyment B, zbiór \texttt{three\_gauss}: accuracy w \% na zbiorze testowym (średnia $\pm$ odchylenie std z 5 ziaren). Oznaczenia jak w tabeli~\ref{tab:B_simple}.}\label{tab:B_three}
+		\begin{tabular}{@{}lcccc@{}}
+			\toprule
+			Architektura & $N=100$ & $N=500$ & $N=1000$ & $N=10000$ \\
+			\midrule
+			bez warstw ukrytych & 92,87 $\pm$ 0,18 & 92,75 $\pm$ 0,09 & 92,49 $\pm$ 0,02 & 92,55 $\pm$ 0,00 \\
+			$1\times8$ & 93,27 $\pm$ 0,28 & 93,55 $\pm$ 0,33 & 93,49 $\pm$ 0,10 & 93,76 $\pm$ 0,03 \\
+			$1\times32$ & 93,40 $\pm$ 0,15 & 93,45 $\pm$ 0,36 & 93,52 $\pm$ 0,08 & 93,76 $\pm$ 0,04 \\
+			$2\times8$ & 93,13 $\pm$ 0,18 & 93,69 $\pm$ 0,46 & \textbf{93,61 $\pm$ 0,11} & 93,72 $\pm$ 0,03 \\
+			$2\times32$ & 93,20 $\pm$ 0,18 & 93,65 $\pm$ 0,21 & 92,97 $\pm$ 0,15 & 93,67 $\pm$ 0,07 \\
+			$3\times8$ & 93,27 $\pm$ 0,28 & 93,79 $\pm$ 0,12 & 93,42 $\pm$ 0,22 & 93,71 $\pm$ 0,07 \\
+			$3\times32$ & \textbf{93,47 $\pm$ 0,30} & \textbf{93,95 $\pm$ 0,11} & 93,37 $\pm$ 0,04 & 93,64 $\pm$ 0,09 \\
+			$4\times8$ & 93,27 $\pm$ 0,28 & 93,73 $\pm$ 0,32 & 93,38 $\pm$ 0,13 & \textbf{93,77 $\pm$ 0,01} \\
+			$4\times32$ & 93,40 $\pm$ 0,15 & 93,69 $\pm$ 0,24 & 93,45 $\pm$ 0,08 & 93,69 $\pm$ 0,03 \\
+			\bottomrule
+		\end{tabular}
+	\end{table}
+	
+	\begin{table}[H]
+		\centering
+		\footnotesize
+		\caption{Eksperyment B, zbiór \texttt{activation}: RMSE na zbiorze testowym (średnia $\pm$ odchylenie std z 5 ziaren). Oznaczenia jak w tabeli~\ref{tab:B_simple}; mniej znaczy lepiej.}\label{tab:B_act}
+		\begin{tabular}{@{}lcccc@{}}
+			\toprule
+			Architektura & $N=100$ & $N=500$ & $N=1000$ & $N=10000$ \\
+			\midrule
+			bez warstw ukrytych & 46,29 $\pm$ 0,15 & 47,300 $\pm$ 0,097 & 48,97 $\pm$ 0,55 & 48,090 $\pm$ 0,077 \\
+			$1\times8$ & 0,89 $\pm$ 0,35 & 0,93 $\pm$ 0,45 & 1,01 $\pm$ 0,51 & 1,03 $\pm$ 0,45 \\
+			$1\times32$ & \textbf{0,61 $\pm$ 0,67} & \textbf{0,89 $\pm$ 0,96} & \textbf{0,66 $\pm$ 0,59} & \textbf{0,78 $\pm$ 0,64} \\
+			$2\times8$ & 1,8 $\pm$ 1,1 & 1,9 $\pm$ 1,1 & 1,6 $\pm$ 1,0 & 2,0 $\pm$ 1,2 \\
+			$2\times32$ & 1,45 $\pm$ 0,48 & 1,72 $\pm$ 0,61 & 1,02 $\pm$ 0,51 & 1,04 $\pm$ 0,13 \\
+			$3\times8$ & 2,00 $\pm$ 0,90 & 3,1 $\pm$ 3,6 & 1,63 $\pm$ 0,73 & 4,1 $\pm$ 3,9 \\
+			$3\times32$ & 0,88 $\pm$ 0,17 & 1,8 $\pm$ 1,2 & 1,28 $\pm$ 0,92 & 2,0 $\pm$ 1,3 \\
+			$4\times8$ & 0,86 $\pm$ 0,20 & 1,85 $\pm$ 0,60 & 2,7 $\pm$ 1,8 & 2,4 $\pm$ 3,1 \\
+			$4\times32$ & 0,95 $\pm$ 0,45 & 1,2 $\pm$ 1,1 & 2,9 $\pm$ 2,3 & 1,04 $\pm$ 0,74 \\
+			\bottomrule
+		\end{tabular}
+	\end{table}
+	
+	\begin{table}[H]
+		\centering
+		\footnotesize
+		\caption{Eksperyment B, zbiór \texttt{cube}: RMSE na zbiorze testowym (średnia $\pm$ odchylenie std z 5 ziaren). Oznaczenia jak w tabeli~\ref{tab:B_simple}; mniej znaczy lepiej.}\label{tab:B_cube}
+		\begin{tabular}{@{}lcccc@{}}
+			\toprule
+			Architektura & $N=100$ & $N=500$ & $N=1000$ & $N=10000$ \\
+			\midrule
+			bez warstw ukrytych & 301,0 $\pm$ 1,9 & 297,10 $\pm$ 0,83 & 305,00 $\pm$ 0,31 & 302,80 $\pm$ 0,44 \\
+			$1\times8$ & 204 $\pm$ 16 & 201,6 $\pm$ 9,2 & 209 $\pm$ 10 & 191,9 $\pm$ 9,1 \\
+			$1\times32$ & \textbf{195 $\pm$ 16} & \textbf{197 $\pm$ 17} & \textbf{203 $\pm$ 20} & \textbf{180,4 $\pm$ 8,9} \\
+			$2\times8$ & 233,8 $\pm$ 4,3 & 224,4 $\pm$ 1,9 & 233,6 $\pm$ 3,9 & 204,7 $\pm$ 8,0 \\
+			$2\times32$ & 233,7 $\pm$ 3,3 & 228,8 $\pm$ 5,3 & 235 $\pm$ 15 & 194,1 $\pm$ 9,7 \\
+			$3\times8$ & 244 $\pm$ 16 & 243,2 $\pm$ 8,1 & 249,1 $\pm$ 5,9 & 222,0 $\pm$ 4,8 \\
+			$3\times32$ & 254,2 $\pm$ 2,4 & 243,0 $\pm$ 7,3 & 247,8 $\pm$ 2,7 & 221,0 $\pm$ 3,2 \\
+			$4\times8$ & 263,9 $\pm$ 3,9 & 255,6 $\pm$ 3,6 & 232,3 $\pm$ 3,3 & 236,7 $\pm$ 5,1 \\
+			$4\times32$ & 203,4 $\pm$ 7,3 & 203,3 $\pm$ 6,9 & 212,9 $\pm$ 7,0 & 231,0 $\pm$ 7,2 \\
+			\bottomrule
+		\end{tabular}
+	\end{table}
+	
+	\paragraph{\texttt{simple}.} Zbiór jest liniowo rozdzielny i, zgodnie z oczekiwaniem, nie wymaga warstw ukrytych. Model bez warstw ukrytych (regresja softmax) osiąga 99,40\%, 99,58\% i 99,64\% dla $N=500$, $1000$ i $10000$, czyli nie mniej niż każda sieć z warstwami ukrytymi (99,0--99,6\%); dla $N=100$ wszystkie architektury dają 99,00\%. Sieci z warstwami ukrytymi mają przy tym większy rozrzut (np.\ $1\times8$ dla $N=1000$: odchylenie 0,69~p.p. wobec 0,13~p.p. dla modelu liniowego).
+	
+	\paragraph{\texttt{three\_gauss}.} Tu model liniowy jest wyraźnie gorszy: 92,5--92,9\% wobec 93,0--94,0\% dla sieci z warstwą ukrytą. Już jedna warstwa 8 neuronów daje przewagę 0,4~p.p.\ dla $N=100$, rosnącą do 1,2~p.p.\ dla $N=10000$, przy czym przy $N=10000$ rozrzut jest bardzo mały (0,03~p.p.). Granice między klasami o różnych kowariancjach (klasa~3 jest wydłużona) nie są liniowe, a model liniowy może je tylko przybliżyć prostą. Dodatkowe warstwy i neurony nie poprawiają wyniku w sposób systematyczny: dla $N=10000$ wszystkie sieci z warstwami ukrytymi mieszczą się w przedziale 93,64--93,77\%, o szerokości niewiele większej niż odchylenia standardowe. Nie widać też pogorszenia dla największych sieci, nawet dla $N=100$, gdzie sieć $4\times32$ ma ok.\ 3,4~tys.\ parametrów przy 240~próbkach uczących.
+	
+	\paragraph{\texttt{activation}.} Model liniowy się nie sprawdza (RMSE 46--49), natomiast jedna warstwa ukryta wystarcza: najlepszy wynik w każdym z czterech rozmiarów zbioru daje sieć $1\times32$ (RMSE 0,61--0,89). Różnica między $1\times8$ a $1\times32$ jest mniejsza niż rozrzut (np.\ $0{,}89\pm0{,}35$ i $0{,}61\pm0{,}67$ dla $N=100$). Dodawanie kolejnych warstw nie poprawia wyniku, a często go pogarsza i zwiększa rozrzut (np.\ $3\times8$ dla $N=10000$: $4{,}1\pm3{,}9$; $4\times32$ dla $N=1000$: $2{,}9\pm2{,}3$). Możliwe wyjaśnienie, którego nie sprawdzano, to zbyt mała liczba aktualizacji i zbyt gruba siatka kroków uczenia dla głębszych sieci.
+	
+	\paragraph{\texttt{cube}.} Model liniowy daje RMSE 297--305, bo poza zakresem uczącym kontynuuje prostą. Najlepsza jest znów sieć $1\times32$ w każdym rozmiarze zbioru (180--203), a żadna sieć z 2--4 warstwami ukrytymi nie jest lepsza od najlepszej sieci jednowarstwowej. Ponieważ błąd jest zdominowany przez brzegi przedziału testowego (zob.\ eksperyment A), różnice między architekturami odzwierciedlają głównie to, jak dana sieć zachowuje się poza zakresem danych uczących, a nie to, jak dobrze dopasowuje funkcję wewnątrz niego.
+	
+	\paragraph{Wpływ rozmiaru zbioru uczącego.} W klasyfikacji accuracy rośnie z $N$ nieznacznie (\texttt{simple}: od 99,0\% do ok.\ 99,5\%; \texttt{three\_gauss}: od ok.\ 93,3\% do ok.\ 93,7\%), a wyniki dla $N=10000$ są najbardziej powtarzalne. W regresji zwiększanie $N$ prawie nie poprawia wyników; jedynie $N=10000$ w \texttt{cube} daje o ok.\ 6--11\% niższy RMSE sieci jednowarstwowych. Nie widać też przeuczenia specyficznego dla małych $N$: w klasyfikacji największe sieci nie są gorsze od mniejszych także dla $N=100$, a w regresji sieć $1\times32$ jest najlepsza w każdym rozmiarze zbioru.
+	
+	\subsection{Eksperyment C: miara błędu}
+	Tabele~\ref{tab:C_cls} i~\ref{tab:C_reg} porównują sieci uczone dwiema miarami błędu. Wszystkie metryki liczono identycznie dla obu wariantów.
+	
+	\begin{table}[H]
+		\centering
+		\footnotesize
+		\setlength{\tabcolsep}{4pt}
+		\caption{Eksperyment C, klasyfikacja: accuracy (w \%) i entropia krzyżowa na zbiorze testowym dla sieci uczonej entropią krzyżową (CE) lub MSE (średnia $\pm$ odchylenie std z 5 ziaren) oraz wybrany krok uczenia $\eta$. Pogrubienie wskazuje lepszą średnią w parze (remisów nie pogrubiono) i nie oznacza istotności statystycznej.}\label{tab:C_cls}
+		\begin{tabular}{@{}llcccc@{\hspace{12pt}}cc@{}}
+			\toprule
+			& & \multicolumn{2}{c}{Accuracy [\%]} & \multicolumn{2}{c}{Entropia krzyżowa} & \multicolumn{2}{c}{$\eta$} \\
+			\cmidrule(lr){3-4}\cmidrule(lr){5-6}\cmidrule(lr){7-8}
+			Zbiór & $N$ & CE & MSE & CE & MSE & CE & MSE \\
+			\midrule
+			\texttt{simple} & 100 & 99,00 $\pm$ 0,00 & 99,00 $\pm$ 0,00 & \textbf{0,02993 $\pm$ 0,00086} & 0,03310 $\pm$ 0,00018 & 0,01 & 0,1 \\
+			& 500 & 99,20 $\pm$ 0,00 & 99,20 $\pm$ 0,00 & 0,0297 $\pm$ 0,0014 & \textbf{0,0193 $\pm$ 0,0015} & 0,1 & 0,1 \\
+			& 1000 & 99,18 $\pm$ 0,19 & \textbf{99,28 $\pm$ 0,20} & 0,0176 $\pm$ 0,0033 & \textbf{0,0165 $\pm$ 0,0040} & 0,1 & 0,1 \\
+			& 10000 & 99,39 $\pm$ 0,21 & \textbf{99,48 $\pm$ 0,23} & 0,0138 $\pm$ 0,0038 & \textbf{0,0126 $\pm$ 0,0031} & 0,1 & 0,1 \\
+			\midrule
+			\texttt{three\_gauss} & 100 & \textbf{93,20 $\pm$ 0,18} & 93,13 $\pm$ 0,18 & \textbf{0,1740 $\pm$ 0,0044} & 0,228 $\pm$ 0,016 & 0,01 & 0,1 \\
+			& 500 & 93,67 $\pm$ 0,43 & \textbf{93,92 $\pm$ 0,09} & \textbf{0,1730 $\pm$ 0,0072} & 0,221 $\pm$ 0,020 & 0,1 & 0,1 \\
+			& 1000 & \textbf{93,39 $\pm$ 0,18} & 93,26 $\pm$ 0,09 & \textbf{0,1657 $\pm$ 0,0018} & 0,1834 $\pm$ 0,0076 & 0,1 & 0,1 \\
+			& 10000 & \textbf{93,73 $\pm$ 0,04} & 93,72 $\pm$ 0,14 & \textbf{0,15690 $\pm$ 0,00054} & 0,176 $\pm$ 0,010 & 0,1 & 0,1 \\
+			\bottomrule
+		\end{tabular}
+	\end{table}
+	
+	\begin{table}[H]
+		\centering
+		\footnotesize
+		\setlength{\tabcolsep}{4pt}
+		\caption{Eksperyment C, regresja: RMSE i MAE na zbiorze testowym dla sieci uczonej MSE lub MAE (średnia $\pm$ odchylenie std z 5 ziaren) oraz wybrany krok uczenia $\eta$. Mniej znaczy lepiej. Pogrubienie wskazuje lepszą średnią w parze i nie oznacza istotności statystycznej.}\label{tab:C_reg}
+		\begin{tabular}{@{}llcccc@{\hspace{12pt}}cc@{}}
+			\toprule
+			& & \multicolumn{2}{c}{RMSE} & \multicolumn{2}{c}{MAE} & \multicolumn{2}{c}{$\eta$} \\
+			\cmidrule(lr){3-4}\cmidrule(lr){5-6}\cmidrule(lr){7-8}
+			Zbiór & $N$ & MSE & MAE & MSE & MAE & MSE & MAE \\
+			\midrule
+			\texttt{activation} & 100 & \textbf{1,45 $\pm$ 0,48} & 1,94 $\pm$ 0,69 & \textbf{0,76 $\pm$ 0,23} & 1,15 $\pm$ 0,32 & 0,1 & 0,001 \\
+			& 500 & \textbf{1,72 $\pm$ 0,61} & 1,87 $\pm$ 0,54 & \textbf{0,89 $\pm$ 0,24} & 1,09 $\pm$ 0,28 & 0,1 & 0,001 \\
+			& 1000 & \textbf{1,02 $\pm$ 0,51} & 1,98 $\pm$ 0,55 & \textbf{0,58 $\pm$ 0,32} & 1,16 $\pm$ 0,27 & 0,1 & 0,001 \\
+			& 10000 & \textbf{1,04 $\pm$ 0,13} & 2,11 $\pm$ 0,89 & \textbf{0,585 $\pm$ 0,062} & 1,33 $\pm$ 0,58 & 0,1 & 0,001 \\
+			\midrule
+			\texttt{cube} & 100 & \textbf{233,7 $\pm$ 3,3} & 248,8 $\pm$ 5,7 & \textbf{106,7 $\pm$ 2,2} & 118,3 $\pm$ 4,5 & 0,1 & 0,01 \\
+			& 500 & 228,8 $\pm$ 5,3 & \textbf{223,8 $\pm$ 9,9} & \textbf{103,5 $\pm$ 3,3} & 105,5 $\pm$ 4,5 & 0,1 & 0,01 \\
+			& 1000 & \textbf{235 $\pm$ 15} & 241,0 $\pm$ 7,3 & \textbf{107 $\pm$ 10} & 121,9 $\pm$ 4,8 & 0,1 & 0,001 \\
+			& 10000 & \textbf{194,1 $\pm$ 9,7} & 277,8 $\pm$ 3,1 & \textbf{83,0 $\pm$ 5,6} & 141,9 $\pm$ 4,3 & 0,1 & 0,1 \\
+			\bottomrule
+		\end{tabular}
+	\end{table}
+	
+	\paragraph{Klasyfikacja.} Accuracy jest praktycznie identyczna dla obu miar: różnice nie przekraczają 0,25~p.p. i mieszczą się w rozrzucie. Entropia krzyżowa na zbiorze testowym jest natomiast dla \texttt{three\_gauss} niższa (lepsza) dla sieci uczonej entropią krzyżową we wszystkich czterech rozmiarach: 0,157--0,174 wobec 0,176--0,228 dla MSE. To naturalne, bo oceniamy metryką, którą ta sieć bezpośrednio minimalizowała. W \texttt{simple} jest odwrotnie dla $N\ge500$: sieć uczona MSE ma niższą entropię (np.\ 0,0193 wobec 0,0297 dla $N=500$), choć dla $N\ge1000$ różnice mieszczą się w rozrzucie. Możliwe wyjaśnienie, którego nie sprawdzano: dla zbioru liniowo rozdzielnego sieć uczona entropią krzyżową staje się bardzo pewna swoich odpowiedzi (por.\ rosnące wagi, rys.~\ref{fig:weights}), a entropia krzyżowa silnie karze pewne pomyłki, np.\ dla punktów z błędnymi etykietami tuż przy granicy.
+	
+	\paragraph{Regresja.} Sieć uczona MSE jest nie gorsza od uczonej MAE, i to także wtedy, gdy oceniamy MAE: dla \texttt{activation} RMSE wynosi 1,0--1,7 wobec 1,9--2,1, a MAE 0,58--0,89 wobec 1,09--1,33; dla \texttt{cube} średnia MAE jest niższa dla MSE w każdym rozmiarze, a RMSE w trzech z czterech (dla $N=500$ sieć uczona MAE ma niższą średnią, ale w granicach rozrzutu). Największa różnica występuje dla $N=10000$ w \texttt{cube}: RMSE 194 wobec 278. Nasze zbiory mają bardzo mały szum, więc nie ma wartości odstających, wobec których MAE miałaby być odporniejsza, i jej zaleta nie ma jak się ujawnić.
+	Miary wymagały różnych kroków uczenia: MSE we wszystkich 8 przypadkach miało $\eta=0{,}1$, a MAE w 5 z 8 najmniejszy z sprawdzanych krok $0{,}001$ (w pozostałych: $0{,}01$ dwa razy i $0{,}1$ raz). Prawdopodobnym powodem jest to, że podgradient MAE ma stałą wartość bezwzględną niezależnie od wielkości błędu, więc przy dużym kroku sieć oscyluje wokół minimum. Wspólny krok pogorszyłby (według błędu walidacyjnego) wynik jednej z miar, więc osobny dobór kroku był potrzebny. Wybór najmniejszego kroku z siatki dla MAE sugeruje jednak, że przewaga MSE może być częściowo skutkiem zbyt grubej siatki, a nie samej miary błędu.
+	
+	\subsection{Powtarzalność wyników}
+	W klasyfikacji rozrzut jest mały: odchylenie standardowe accuracy jest zwykle rzędu 0,1--0,5~p.p. (największe, 0,69~p.p., dla $1\times8$ w \texttt{simple} przy $N=1000$), a dla \texttt{simple} przy $N=100$ wynosi 0 (wszystkie ziarna dają te same predykcje). W \texttt{three\_gauss} przy $N=10000$ odchylenia sieci z warstwami ukrytymi mieszczą się w przedziale 0,02--0,09~p.p. Model bez warstw ukrytych jest niemal deterministyczny (odchylenie od 0,18~p.p.\ dla $N=100$ do 0,003~p.p.\ dla $N=10000$ w \texttt{three\_gauss}), co jest zgodne z tym, że regresja softmax z entropią krzyżową jest zadaniem wypukłym i wagi początkowe prawie nie mają znaczenia.
+	W regresji rozrzut jest względnie duży. W \texttt{activation} odchylenie sieci referencyjnej (tanh, $2\times32$) wynosi 0,13--0,61 przy średniej 1,0--1,7, a dla głębszych sieci bywa porównywalne ze średnią (np.\ $3\times8$, $N=500$: $3{,}1\pm3{,}6$); dla ReLU przy $N=1000$ wynik $62\pm53$ pokazuje bardzo duży rozrzut między ziarnami. W \texttt{cube} względny rozrzut jest mniejszy (zwykle 1--10\% średniej), bo błąd jest zdominowany przez ekstrapolację na brzegach. Nie widać wyraźnego spadku rozrzutu z rozmiarem zbioru w regresji (w \texttt{activation} dla sieci referencyjnej spada dopiero przy $N=10000$). Wyniki pojedynczego uruchomienia w regresji nie są zatem wiarygodne i uśrednianie po ziarnach jest konieczne. Pięć ziaren daje jednak tylko zgrubną ocenę odchylenia.
+	
+	\subsection{Podsumowanie}
+	W klasyfikacji wszystkie rozsądne konfiguracje osiągają ok.\ 99\% (\texttt{simple}) i 93--94\% (\texttt{three\_gauss}), a poziomy te wyglądają na ograniczone przez dane (liniową rozdzielność i nakładanie się klas), więc wybór aktywacji i miary błędu ma niewielki wpływ. Warstwa ukryta potrzebna jest tylko w \texttt{three\_gauss} (zysk 0,4--1,2~p.p.), a jedna warstwa wystarcza. W regresji jedna warstwa ukryta również wystarcza, a dalsze warstwy nie pomagają; sieci uczone MSE są nie gorsze od uczonych MAE. Ranking aktywacji i architektur w regresji jest w dużej mierze determinowany zachowaniem sieci poza zakresem uczącym (test obejmuje ekstrapolację), więc nie jest oceną jakości dopasowania wewnątrz tego zakresu.
+	Ograniczenia: siatka kroków uczenia (0,1; 0,01; 0,001) jest gruba, a najwyższy lub najniższy jej element był często wybierany; krok wybierano na jednym ziarnie; ziaren było tylko pięć; dane regresji mają bardzo mały szum, a liczba aktualizacji wag była stała. Możliwe rozszerzenia to osobne raportowanie błędu w zakresie uczącym i poza nim, gęstsza siatka kroków uczenia, wczesne zatrzymanie lub regularyzacja (rosnące wagi w \texttt{simple}) oraz więcej ziaren.
+	
+	%==============================================================================
+	\bibliographystyle{unsrt}
+	\bibliography{references}
+	
+\end{document}
