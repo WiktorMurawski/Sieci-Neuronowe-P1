@@ -1,0 +1,10 @@
+Eksperyment D_batch_size
+Seeds: [0, 1, 2, 3, 4]
+Liczba przebiegów: 20
+
+config                        test_acc_mean      std  train_acc   time_s
+------------------------------------------------------------------------
+batch128                             0.9487   0.0014     1.0000      5.8
+batch256                             0.9424   0.0008     1.0000      3.9
+batch32                              0.9536   0.0012     1.0000     20.1
+batch64                              0.9538   0.0008     1.0000      8.1
