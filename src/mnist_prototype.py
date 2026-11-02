@@ -1,11 +1,3 @@
-"""Prototyp klasyfikatora cyfr MNIST z użyciem własnej implementacji MLP.
-
-Użycie:
-    python mnist_prototype.py
-
-Parametry są ustawione tak, aby dało się szybko zobaczyć, czy wszystko działa.
-Później można je zmieniać (liczba warstw/neuronów, aktywacja, lr, momentum, epochs...).
-"""
 import time
 import numpy as np
 
@@ -27,10 +19,7 @@ def main():
     X_train, y_train, X_test, y_test = load_mnist()
     print(f"  train: {X_train.shape}, test: {X_test.shape}")
 
-    # --- konfiguracja bazowa (prototyp) ---
-    # Dla szybkości bierzemy podzbiór danych uczących.
-    # Później można ustawić SUBSET = None, żeby uczyć na całych 60k.
-    SUBSET = None         # None = cały zbiór
+    SUBSET = None
     SEED = 0
     LAYER_SIZES = [784, 128, 64, 10]
     HIDDEN_ACT = "relu"
@@ -74,18 +63,15 @@ def main():
     elapsed = time.perf_counter() - t0
     print(f"  czas: {elapsed:.1f} s")
 
-    # wyniki na zbiorze uczącym (podzbiorze) i testowym
     train_acc = net.score(X_tr, y_tr)
     test_acc = net.score(X_test, y_test)
     print(f"\nAccuracy (train subset): {train_acc:.4f}")
     print(f"Accuracy (test):         {test_acc:.4f}")
 
-    # krótki przebieg uczenia
     print("\nPrzebieg (ostatnie 5 epok):")
     for i in range(max(0, len(history.loss) - 5), len(history.loss)):
         print(f"  epoka {i+1:3d}: loss={history.loss[i]:.4f}  acc={history.metric[i]:.4f}")
 
-    # kilka przykładowych predykcji
     print("\nPrzykładowe predykcje (test):")
     preds = net.predict(X_test[:10])
     for i in range(10):

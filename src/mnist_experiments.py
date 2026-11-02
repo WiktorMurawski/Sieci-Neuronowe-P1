@@ -2,10 +2,10 @@
 Eksperymenty na MNIST z własnym MLP.
 
 Eksperymenty:
-  A - architektura (głębokość / szerokość)
-  B - funkcja aktywacji
-  C - learning rate + momentum
-  D - batch size
+  A – architektura (głębokość / szerokość)
+  B – funkcja aktywacji
+  C – learning rate + momentum
+  D – batch size (opcjonalny)
 
 Każda konfiguracja jest uruchamiana dla seedów 0..4.
 Wyniki (tabele) i wykresy zapisywane są do katalogu results/.
@@ -15,6 +15,7 @@ Uruchomienie:
     python run_experiments.py --exp A      # tylko architektury
     python run_experiments.py --exp B C    # wybrane
     python run_experiments.py --subset 20000   # szybsze testy na podzbiorze
+    python run_experiments.py --jobs 4     # 4 procesy równolegle
 """
 
 from __future__ import annotations
@@ -24,10 +25,13 @@ import csv
 import json
 import os
 import time
-from dataclasses import dataclass, asdict
+from concurrent.futures import ProcessPoolExecutor, as_completed
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
+import matplotlib
+matplotlib.use("Agg")  # backend bez GUI – bezpieczny w procesach równoległych
 import matplotlib.pyplot as plt
 import numpy as np
 
@@ -186,8 +190,28 @@ def print_summary_table(summary: list[dict], title: str):
 
 
 # ---------------------------------------------------------------------------
-# Pojedynczy przebieg
+# Pojedynczy przebieg (wywoływany też w procesach roboczych)
 # ---------------------------------------------------------------------------
+
+def _limit_blas_threads(n: int = 1) -> None:
+    """Ogranicza wątki BLAS w bieżącym procesie (musi być przed ciężkimi matmulami)."""
+    n_str = str(max(1, n))
+    for key in (
+        "OMP_NUM_THREADS",
+        "MKL_NUM_THREADS",
+        "OPENBLAS_NUM_THREADS",
+        "NUMEXPR_NUM_THREADS",
+        "VECLIB_MAXIMUM_THREADS",
+        "BLIS_NUM_THREADS",
+    ):
+        os.environ[key] = n_str
+    # Próba twardego ustawienia po imporcie (działa dla części buildów OpenBLAS/MKL)
+    try:
+        import threadpoolctl
+        threadpoolctl.threadpool_limits(n)
+    except Exception:
+        pass
+
 
 def run_one(
     *,
@@ -204,8 +228,10 @@ def run_one(
     y_train: np.ndarray,
     X_test: np.ndarray,
     y_test: np.ndarray,
-    plots_dir: Path,
+    plots_dir: str | Path,
 ) -> RunResult:
+    plots_dir = Path(plots_dir)
+
     net = MLP(
         layers,
         hidden_activation=activation,
@@ -229,7 +255,7 @@ def run_one(
     test_acc = net.score(X_test, y_test)
     final_loss = history.loss[-1] if history.loss else float("nan")
 
-    # wykres
+    # Każdy przebieg ma unikalną nazwę pliku → brak kolizji przy zapisie równoległym
     plot_path = plots_dir / f"{config_name}_seed{seed}.pdf"
     title = f"{config_name} | seed={seed} | test_acc={test_acc:.4f}"
     save_learning_curves(history, plot_path, title)
@@ -238,7 +264,7 @@ def run_one(
         exp=exp,
         config_name=config_name,
         seed=seed,
-        layers=layers,
+        layers=list(layers),
         activation=activation,
         lr=lr,
         momentum=momentum,
@@ -250,6 +276,37 @@ def run_one(
         time_sec=elapsed,
         history_loss=list(history.loss),
         history_metric=list(history.metric),
+    )
+
+
+def _pool_initializer(blas_threads: int = 1) -> None:
+    """Uruchamiane raz w każdym procesie roboczym – zanim polecą joby."""
+    _limit_blas_threads(blas_threads)
+    matplotlib.use("Agg")
+
+
+def _run_one_job(payload: dict) -> RunResult:
+    """Worker: ładuje MNIST z dysku (bez pickle wielkich tablic) i trenuje."""
+    X_train, y_train, X_test, y_test = load_mnist(
+        path=payload["mnist_path"],
+        subset=payload.get("subset"),
+        seed=0,
+    )
+    return run_one(
+        exp=payload["exp"],
+        config_name=payload["config_name"],
+        layers=payload["layers"],
+        activation=payload["activation"],
+        lr=payload["lr"],
+        momentum=payload["momentum"],
+        batch_size=payload["batch_size"],
+        epochs=payload["epochs"],
+        seed=payload["seed"],
+        X_train=X_train,
+        y_train=y_train,
+        X_test=X_test,
+        y_test=y_test,
+        plots_dir=payload["plots_dir"],
     )
 
 
@@ -362,60 +419,108 @@ def run_experiment(
     configs: list[dict[str, Any]],
     X_train, y_train, X_test, y_test,
     seeds: list[int] = SEEDS,
+    jobs: int = 1,
+    mnist_path: str = MNIST_PATH,
+    subset: int | None = None,
 ):
     exp_dir = RESULTS_DIR / f"exp_{exp_id}"
     plots_dir = exp_dir / "plots"
     plots_dir.mkdir(parents=True, exist_ok=True)
 
-    all_results: list[RunResult] = []
-    raw_rows: list[dict] = []
-
+    jobs = max(1, int(jobs))
     total = len(configs) * len(seeds)
-    done = 0
 
-    print(f"\n>>> Eksperyment {exp_id}: {len(configs)} konfiguracji × {len(seeds)} seedów = {total} przebiegów")
+    print(
+        f"\n>>> Eksperyment {exp_id}: {len(configs)} konfiguracji × {len(seeds)} seedów "
+        f"= {total} przebiegów  (jobs={jobs})"
+    )
 
+    # Lekki payload (bez tablic) – worker sam ładuje mnist.npz z dysku
+    payloads: list[dict] = []
     for cfg in configs:
         for seed in seeds:
-            done += 1
-            print(f"  [{done}/{total}] {cfg['config_name']}  seed={seed} ...", end=" ", flush=True)
+            payloads.append({
+                "exp": exp_id,
+                "config_name": cfg["config_name"],
+                "layers": cfg["layers"],
+                "activation": cfg["activation"],
+                "lr": cfg["lr"],
+                "momentum": cfg["momentum"],
+                "batch_size": cfg["batch_size"],
+                "epochs": cfg["epochs"],
+                "seed": seed,
+                "plots_dir": str(plots_dir),
+                "mnist_path": str(Path(mnist_path).resolve()),
+                "subset": subset,
+            })
 
+    all_results: list[RunResult] = []
+
+    if jobs == 1:
+        for i, payload in enumerate(payloads, 1):
+            print(
+                f"  [{i}/{total}] {payload['config_name']}  seed={payload['seed']} ...",
+                end=" ", flush=True,
+            )
+            # Sekwencyjnie: używamy już załadowanych tablic (bez ponownego I/O)
             result = run_one(
-                exp=exp_id,
-                config_name=cfg["config_name"],
-                layers=cfg["layers"],
-                activation=cfg["activation"],
-                lr=cfg["lr"],
-                momentum=cfg["momentum"],
-                batch_size=cfg["batch_size"],
-                epochs=cfg["epochs"],
-                seed=seed,
+                exp=payload["exp"],
+                config_name=payload["config_name"],
+                layers=payload["layers"],
+                activation=payload["activation"],
+                lr=payload["lr"],
+                momentum=payload["momentum"],
+                batch_size=payload["batch_size"],
+                epochs=payload["epochs"],
+                seed=payload["seed"],
                 X_train=X_train,
                 y_train=y_train,
                 X_test=X_test,
                 y_test=y_test,
-                plots_dir=plots_dir,
+                plots_dir=payload["plots_dir"],
             )
             all_results.append(result)
-
-            row = {
-                "config": result.config_name,
-                "seed": result.seed,
-                "layers": str(result.layers),
-                "activation": result.activation,
-                "lr": result.lr,
-                "momentum": result.momentum,
-                "batch_size": result.batch_size,
-                "epochs": result.epochs,
-                "train_acc": round(result.train_acc, 5),
-                "test_acc": round(result.test_acc, 5),
-                "final_loss": round(result.final_loss, 5),
-                "time_sec": round(result.time_sec, 2),
-            }
-            raw_rows.append(row)
             print(f"test_acc={result.test_acc:.4f}  ({result.time_sec:.1f}s)")
+    else:
+        # 1 wątek BLAS na proces → jobs procesów ≈ jobs zajętych rdzeni (bez oversubscription)
+        done = 0
+        with ProcessPoolExecutor(
+            max_workers=jobs,
+            initializer=_pool_initializer,
+            initargs=(1,),
+        ) as pool:
+            futures = {pool.submit(_run_one_job, p): p for p in payloads}
+            for fut in as_completed(futures):
+                result = fut.result()
+                all_results.append(result)
+                done += 1
+                print(
+                    f"  [{done}/{total}] {result.config_name}  seed={result.seed}  "
+                    f"test_acc={result.test_acc:.4f}  ({result.time_sec:.1f}s)"
+                )
 
-    # zapis surowych wyników
+    # stabilna kolejność: config, potem seed
+    all_results.sort(key=lambda r: (r.config_name, r.seed))
+
+    raw_rows = [
+        {
+            "config": r.config_name,
+            "seed": r.seed,
+            "layers": str(r.layers),
+            "activation": r.activation,
+            "lr": r.lr,
+            "momentum": r.momentum,
+            "batch_size": r.batch_size,
+            "epochs": r.epochs,
+            "train_acc": round(r.train_acc, 5),
+            "test_acc": round(r.test_acc, 5),
+            "final_loss": round(r.final_loss, 5),
+            "time_sec": round(r.time_sec, 2),
+        }
+        for r in all_results
+    ]
+
+    # zapis surowych wyników (tylko w procesie głównym)
     write_csv(exp_dir / "raw_results.csv", raw_rows)
 
     # podsumowanie (mean ± std)
@@ -485,23 +590,33 @@ def main():
         "--seeds", type=int, nargs="*", default=SEEDS,
         help="Lista seedów (domyślnie 0 1 2 3 4).",
     )
+    parser.add_argument(
+        "--jobs", type=int, default=1,
+        help="Liczba równoległych procesów (1 = sekwencyjnie). Np. --jobs 4",
+    )
     args = parser.parse_args()
 
     epochs = args.epochs
+    jobs = args.jobs
 
     RESULTS_DIR.mkdir(exist_ok=True)
 
     print("Ładowanie MNIST...")
     X_train, y_train, X_test, y_test = load_mnist(subset=args.subset, seed=0)
     print(f"  train: {X_train.shape}, test: {X_test.shape}")
-    print(f"  epoki: {args.epochs}, seedy: {args.seeds}")
+    print(f"  epoki: {args.epochs}, seedy: {args.seeds}, jobs: {jobs}")
+
+    mnist_path = MNIST_PATH
+    subset = args.subset
 
     # ----- A: architektury -----
     best_layers = DEFAULT_ARCH
     if "A" in args.exp:
         results_A, summary_A = run_experiment(
             "A_architecture", configs_A(epochs=epochs),
-            X_train, y_train, X_test, y_test, seeds=args.seeds,
+            X_train, y_train, X_test, y_test,
+            seeds=args.seeds, jobs=jobs,
+            mnist_path=mnist_path, subset=subset,
         )
         # wybierz najlepszą architekturę (po średnim test_acc)
         best = max(summary_A, key=lambda s: s["test_acc_mean"])
@@ -513,7 +628,9 @@ def main():
     if "B" in args.exp:
         results_B, summary_B = run_experiment(
             "B_activation", configs_B(best_layers, epochs=epochs),
-            X_train, y_train, X_test, y_test, seeds=args.seeds,
+            X_train, y_train, X_test, y_test,
+            seeds=args.seeds, jobs=jobs,
+            mnist_path=mnist_path, subset=subset,
         )
         best = max(summary_B, key=lambda s: s["test_acc_mean"])
         # nazwa ma postać "784-256-128-10_relu"
@@ -524,14 +641,18 @@ def main():
     if "C" in args.exp:
         run_experiment(
             "C_lr_momentum", configs_C(best_layers, best_act, epochs=epochs),
-            X_train, y_train, X_test, y_test, seeds=args.seeds,
+            X_train, y_train, X_test, y_test,
+            seeds=args.seeds, jobs=jobs,
+            mnist_path=mnist_path, subset=subset,
         )
 
     # ----- D: batch size -----
     if "D" in args.exp:
         run_experiment(
             "D_batch_size", configs_D(best_layers, best_act, epochs=epochs),
-            X_train, y_train, X_test, y_test, seeds=args.seeds,
+            X_train, y_train, X_test, y_test,
+            seeds=args.seeds, jobs=jobs,
+            mnist_path=mnist_path, subset=subset,
         )
 
     print("\nWszystkie wybrane eksperymenty zakończone.")
