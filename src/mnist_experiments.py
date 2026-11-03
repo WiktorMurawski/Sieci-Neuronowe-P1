@@ -2,20 +2,20 @@
 Eksperymenty na MNIST z własnym MLP.
 
 Eksperymenty:
-  A – architektura (głębokość / szerokość)
-  B – funkcja aktywacji
-  C – learning rate + momentum
-  D – batch size (opcjonalny)
+  A - architektura (głębokość / szerokość)
+  B - funkcja aktywacji
+  C - learning rate + momentum
+  D - batch size (opcjonalny)
 
 Każda konfiguracja jest uruchamiana dla seedów 0..4.
 Wyniki (tabele) i wykresy zapisywane są do katalogu results/.
 
 Uruchomienie:
-    python run_experiments.py              # wszystkie
-    python run_experiments.py --exp A      # tylko architektury
-    python run_experiments.py --exp B C    # wybrane
-    python run_experiments.py --subset 20000   # szybsze testy na podzbiorze
-    python run_experiments.py --jobs 4     # 4 procesy równolegle
+    python run_experiments.py                  # wszystkie
+    python run_experiments.py --exp A          # tylko architektury
+    python run_experiments.py --exp B C        # wybrane
+    python run_experiments.py --subset 10000   # szybsze testy na podzbiorze
+    python run_experiments.py --jobs 4         # 4 procesy równolegle
 """
 
 from __future__ import annotations
