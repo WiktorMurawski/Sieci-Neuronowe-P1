@@ -31,7 +31,7 @@ from pathlib import Path
 from typing import Any
 
 import matplotlib
-matplotlib.use("Agg")  # backend bez GUI – bezpieczny w procesach równoległych
+matplotlib.use("Agg")  # backend bez GUI - bezpieczny w procesach równoległych
 import matplotlib.pyplot as plt
 import numpy as np
 
@@ -280,7 +280,7 @@ def run_one(
 
 
 def _pool_initializer(blas_threads: int = 1) -> None:
-    """Uruchamiane raz w każdym procesie roboczym – zanim polecą joby."""
+    """Uruchamiane raz w każdym procesie roboczym - zanim polecą joby."""
     _limit_blas_threads(blas_threads)
     matplotlib.use("Agg")
 
@@ -315,7 +315,7 @@ def _run_one_job(payload: dict) -> RunResult:
 # ---------------------------------------------------------------------------
 
 def configs_A(epochs: int = DEFAULT_EPOCHS) -> list[dict[str, Any]]:
-    """Eksperyment A – architektury."""
+    """Eksperyment A - architektury."""
     archs = [
         [784, 128, 10],
         [784, 256, 128, 10],          # baseline
@@ -341,7 +341,7 @@ def configs_B(
     best_layers: list[int] | None = None,
     epochs: int = DEFAULT_EPOCHS,
 ) -> list[dict[str, Any]]:
-    """Eksperyment B – funkcje aktywacji."""
+    """Eksperyment B - funkcje aktywacji."""
     layers = best_layers or DEFAULT_ARCH
     acts = ["relu", "tanh", "sigmoid"]
     return [
@@ -363,7 +363,7 @@ def configs_C(
     best_act: str | None = None,
     epochs: int = DEFAULT_EPOCHS,
 ) -> list[dict[str, Any]]:
-    """Eksperyment C – learning rate i momentum."""
+    """Eksperyment C - learning rate i momentum."""
     layers = best_layers or DEFAULT_ARCH
     act = best_act or DEFAULT_ACT
     variants = [
@@ -392,7 +392,7 @@ def configs_D(
     best_act: str | None = None,
     epochs: int = DEFAULT_EPOCHS,
 ) -> list[dict[str, Any]]:
-    """Eksperyment D – batch size."""
+    """Eksperyment D - batch size."""
     layers = best_layers or DEFAULT_ARCH
     act = best_act or DEFAULT_ACT
     batches = [32, 64, 128, 256]
@@ -435,7 +435,7 @@ def run_experiment(
         f"= {total} przebiegów  (jobs={jobs})"
     )
 
-    # Lekki payload (bez tablic) – worker sam ładuje mnist.npz z dysku
+    # Lekki payload (bez tablic) - worker sam ładuje mnist.npz z dysku
     payloads: list[dict] = []
     for cfg in configs:
         for seed in seeds:
